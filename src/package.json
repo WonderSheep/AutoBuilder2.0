@@ -1,0 +1,29 @@
+{
+  "name": "ab_automation",
+  "version": "2.0.0",
+  "description": "Playwright automation script for ad creation - TypeScript version",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "clean": "rm -rf dist",
+    "rebuild": "npm run clean && npm run build"
+  },
+  "keywords": ["playwright", "automation", "typescript", "ad-creation"],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "iconv-lite": "^0.7.2",
+    "playwright": "^1.59.1",
+    "readline-sync": "^1.4.10",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "@types/readline-sync": "^1.4.8",
+    "typescript": "^6.0.2",
+    "ts-node": "^10.9.2"
+  }
+}
