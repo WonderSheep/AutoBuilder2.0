@@ -2,6 +2,8 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.runBili = runBili;
 const utils_1 = require("./utils");
+// 计划级 campaign_id 回写列（AR，0-based 43）；行级完成标记统一用 utils 的 BB 列（utils_1.TAG_COL）
+const CAMPAIGN_ID_COL = 43;
 /**
  * B站广告搭建主函数
  */
@@ -17,17 +19,34 @@ async function runBili(df) {
     (0, utils_1.waitForEnter)('确保当前已处于登录状态后，按下回车开始搭建！若未登录，Misa手机号：13761307177\n');
     await (0, utils_1.saveAuthState)(context, 'auth_state_bili.json');
     await page1.goto(`https://ad.bilibili.com/#/assets/index?activeTab=my-small-game&type=list&account_id=${accountId}`);
+    // 断点续跑：从 BB 列恢复已完成行；从 AR 列恢复已建计划ID 重建 planDict
+    const doneRows = (0, utils_1.readDoneRows)(df);
     const planDict = {};
+    for (let i = 0; i < df.length; i++) {
+        const v = Object.values(df[i]);
+        const campaignId = v.length > CAMPAIGN_ID_COL ? String(v[CAMPAIGN_ID_COL] || '').trim() : '';
+        if (campaignId) {
+            const planNm = `${v[9]}_${v[18]}`; // 活动名称_脱敏人群
+            planDict[planNm] = campaignId;
+        }
+    }
+    console.log(`📦 恢复断点：已建计划 ${Object.keys(planDict).length} 个，已完成单元 ${doneRows.size} 条\n`);
     const pagePositionMap = {
         '信息流小卡_图片': '信息流小卡',
         '信息流大卡_图片': '信息流大卡',
         '信息流大卡_视频': '信息流大卡',
         '竖版视频流_视频': '竖屏视频流',
         '动态区信息流_视频': '动态区信息流',
-        '横版视频': '信息流大卡'
+        '横版视频': '信息流大卡',
+        '播放页_图片': '播放页'
     };
     for (let index = 0; index < df.length; index++) {
         const row = df[index];
+        // 断点续跑：已完成（BB 列有标记）的行直接跳过
+        if (doneRows.has(index)) {
+            console.log(`第${index + 1}条广告 : 已完成，跳过\n`);
+            continue;
+        }
         const values = Object.values(row);
         const strategyId = values[3]; // 策略ID
         const campaignNm = values[9]; // 活动名称
@@ -136,7 +155,7 @@ async function runBili(df) {
         // 新建创意
         // 创意智能衍生 注意这块儿不要开启
         // 添加图片/视频
-        if (['信息流小卡_图片', '信息流大卡_图片'].includes(String(pagePst))) {
+        if (['信息流小卡_图片', '信息流大卡_图片','播放页_图片'].includes(String(pagePst))) {
             await page.getByRole('button', { name: '添加图片' }).click();
             await page.getByRole('textbox', { name: '请输入图片名称' }).fill(String(assetNm));
             await page.getByRole('textbox', { name: '请输入图片名称' }).press('Enter');
@@ -158,8 +177,8 @@ async function runBili(df) {
             await page.getByRole('link', { name: '我的视频' }).click();
             await page.getByRole('textbox', { name: '请输入视频名称搜索' }).fill(String(assetNm));
             await page.getByRole('textbox', { name: '请输入视频名称搜索' }).press('Enter');
-            await page.locator('span.vm[data-v-4dbc4f96]').filter({ hasText: String(assetNm) }).first().click();
-            await page.locator('div.footer-actions button.ivu-btn.ivu-btn-primary.btn.primary[type="button"][data-v-788d48dc]')
+            await page.locator('span.vm[data-v-78adeed5]').filter({ hasText: String(assetNm) }).first().click();
+            await page.locator('div.footer-actions button.ivu-btn.ivu-btn-primary.btn.primary[type="button"][data-v-2c9c7164]')
                 .nth(0).click();
         }
         // 素材标题
@@ -192,10 +211,21 @@ async function runBili(df) {
             const campaignId = extractCampaignId(page.url());
             if (campaignId !== null) {
                 planDict[planNm] = campaignId;
+                // 立即回写计划ID，防止在此之后崩溃导致重复建计划
+                (0, utils_1.markRowAndPersist)(df, index, [{ col: CAMPAIGN_ID_COL, value: campaignId }]);
+                console.log(`💾 计划ID 已回写 Excel，可断点续跑\n`);
             }
         }
+        // 标记本单元完成并回写 BB，下次重跑到此行可直接跳过
+        doneRows.add(index);
+        (0, utils_1.markRowAndPersist)(df, index, [
+            { col: CAMPAIGN_ID_COL, value: planDict[planNm] },
+            { col: utils_1.TAG_COL, value: utils_1.TAG_VALUE },
+        ]);
         console.log(`第${index + 1}条广告 : ${unitNm} 创建成功\n`);
     }
+    // 全部完成则删列收尾（删 AS 及之后，含 BB）；否则保留以便续跑
+    (0, utils_1.trimColumnsIfAllDone)(df, doneRows);
     (0, utils_1.waitForEnter)('广告创建完成，plz press enter and continue');
     await context.close();
     await browser.close();

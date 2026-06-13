@@ -46,6 +46,7 @@ exports.getUrlParam = getUrlParam;
 exports.promptUser = promptUser;
 exports.waitForEnter = waitForEnter;
 exports.trimAndSaveExcel = trimAndSaveExcel;
+exports.writeBackInPlace = writeBackInPlace;
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
 const os = __importStar(require("os"));
@@ -253,9 +254,9 @@ function readTxtFile() {
 function saveExcelFile(data, filename = 'media_id_检查无误后可上传MOP.xlsx') {
     // 读取原始模板，保留Sheet名称、样式、自动筛选等格式
     const tplFiles = fs.readdirSync(getProjectRoot())
-        .filter(f => f.startsWith('media_id_import_template') && f.endsWith('.xlsx'));
+        .filter(f => f.endsWith('.xlsx'));
     if (tplFiles.length === 0) {
-        throw new Error('❌ 未找到模板文件(media_id_import_template*.xlsx)，无法保留格式！');
+        throw new Error('❌ 未找到任何xlsx模板文件，无法保留格式！');
     }
     const tplPath = path.join(getProjectRoot(), tplFiles[0]);
     const workbook = XLSX.readFile(tplPath);
@@ -280,26 +281,30 @@ function saveExcelFile(data, filename = 'media_id_检查无误后可上传MOP.xl
         headers.forEach((header, colIdx) => {
             if (row[header] !== undefined) {
                 const addr = XLSX.utils.encode_cell({ r: rowIdx + 1, c: colIdx });
-                worksheet[addr] = { t: typeof row[header] === 'number' ? 'n' : 's', v: row[header] };
+                worksheet[addr] = { t: 's', v: String(row[header]) };
             }
         });
     });
 
+    // 删除AS列之后的列（只保留A-AS，即列索引0-44）
+    const maxCol = 44; // AS列对应索引44（A=0, ... AS=44）
+    const newEndRow = Math.max(data.length, range.e.r);
+    for (let R = 0; R <= newEndRow; ++R) {
+        for (let C = maxCol + 1; C <= range.e.c; ++C) {
+            const addr = XLSX.utils.encode_cell({ r: R, c: C });
+            delete worksheet[addr];
+        }
+    }
+
     // 更新数据范围
-    const newEndRow = data.length; // 数据行数
-    const newEndCol = headerRow.length - 1; // 保持模板原始列数
+    const newEndCol = Math.min(headerRow.length - 1, maxCol);
     worksheet['!ref'] = XLSX.utils.encode_range({
         s: { r: 0, c: 0 },
         e: { r: newEndRow, c: newEndCol }
     });
 
-    // 更新自动筛选范围
-    if (worksheet['!autofilter']) {
-        worksheet['!autofilter'].ref = XLSX.utils.encode_range({
-            s: { r: 0, c: 0 },
-            e: { r: newEndRow, c: newEndCol }
-        });
-    }
+    // 清除自动筛选
+    delete worksheet['!autofilter'];
 
     const outputPath = path.join(getProjectRoot(), filename);
     XLSX.writeFile(workbook, outputPath);
@@ -340,3 +345,161 @@ function trimAndSaveExcel(data, columns = 44) {
     });
     saveExcelFile(trimmedData);
 }
+/**
+ * 就地把每行指定列写回根目录的原 xlsx（保留原工作簿的全部格式）。
+ * 用于断点续跑：把每次算出的状态（如已建计划ID、已完成标记）写回，
+ * 下次 readExcelFile 读到的就是带状态的文件，从而可恢复进度。
+ *
+ * @param df              readExcelFile 读出的对象数组，行序对应数据行（sheet 第 2 行起）
+ * @param perRowUpdates   df[i] 对应的写入项数组；col 为 0-based 列号，value 为要写的值（空值跳过）
+ */
+function writeBackInPlace(df, perRowUpdates) {
+    const root = getProjectRoot();
+    const files = fs.readdirSync(root).filter(f => f.endsWith('.xlsx') &&
+        !f.startsWith('~$') && !f.startsWith('$') &&
+        fs.statSync(path.join(root, f)).isFile());
+    if (files.length === 0) {
+        throw new Error('❌ 未找到原 xlsx 文件，无法回写断点状态！\n');
+    }
+    // 找到第一个可读取的文件（与 readExcelFile 选择逻辑一致）
+    let tplPath = null;
+    let workbook = null;
+    for (const f of files) {
+        try {
+            tplPath = path.join(root, f);
+            workbook = XLSX.readFile(tplPath);
+            break;
+        }
+        catch {
+            // 尝试下一个文件
+        }
+    }
+    if (!workbook) {
+        throw new Error('❌ 读取原 xlsx 失败，无法回写断点状态！\n');
+    }
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1');
+    // df[i] 对应 sheet 第 i+1 行（第 0 行是表头）
+    for (let i = 0; i < df.length; i++) {
+        const updates = perRowUpdates[i] || [];
+        for (const u of updates) {
+            const addr = XLSX.utils.encode_cell({ r: i + 1, c: u.col });
+            if (u.value === null) {
+                // 显式清空：删除该单元格（用于清空复制源等列）
+                delete worksheet[addr];
+                continue;
+            }
+            if (u.value === undefined || String(u.value).trim() === '') {
+                continue;
+            }
+            worksheet[addr] = { t: 's', v: String(u.value) };
+            // 若写入超出原数据范围，扩展 !ref，确保 Excel 能显示这些列
+            if (u.col > range.e.c) {
+                range.e.c = u.col;
+            }
+            if (i + 1 > range.e.r) {
+                range.e.r = i + 1;
+            }
+        }
+    }
+    worksheet['!ref'] = XLSX.utils.encode_range(range);
+    XLSX.writeFile(workbook, tplPath);
+}
+// ===== 断点续跑（三平台统一）：BB 列完成标记 + 循环后删列 =====
+// BB 列（第 54 列，0-based 53）填 TAG_VALUE 表示"该行已完成"，三平台共用。
+// 用户可在 Excel 里直接增删该值来控制重跑：删掉→该行重跑；填上→强制跳过。
+const TAG_COL = 53;
+const TAG_VALUE = '1';
+// 删列时保留 A-AR（0-based 0-43），删除 AS 及之后（含 BB），与原裁剪逻辑一致。
+const TRIM_MAX_COL = 43;
+/**
+ * 读取已完成的行号集合（BB 列值为 TAG_VALUE 的行）。
+ */
+function readDoneRows(df) {
+    const doneRows = new Set();
+    for (let i = 0; i < df.length; i++) {
+        const v = Object.values(df[i]);
+        if (v.length > TAG_COL && String(v[TAG_COL] || '').trim() === TAG_VALUE) {
+            doneRows.add(i);
+        }
+    }
+    return doneRows;
+}
+/**
+ * 就地把指定行的若干单元格写回原 xlsx（其余行不动），用于断点续跑的增量持久化。
+ * value=null 表示清空该单元格；undefined/空串跳过；其他写入。回写失败只告警不中断。
+ */
+function markRowAndPersist(df, rowIndex, cells) {
+    const perRowUpdates = df.map((_, i) => (i === rowIndex ? cells : []));
+    try {
+        writeBackInPlace(df, perRowUpdates);
+    }
+    catch (e) {
+        console.warn(`⚠️  回写断点状态失败（请关闭 Excel 后重试）：${e}\n`);
+    }
+}
+/**
+ * 就地删除超过 maxCol 的列（删 AS 及之后，含 BB），写回原 xlsx，保留其余格式。
+ */
+function trimColumnsInPlace(maxCol = TRIM_MAX_COL) {
+    const root = getProjectRoot();
+    const files = fs.readdirSync(root).filter(f => f.endsWith('.xlsx') &&
+        !f.startsWith('~$') && !f.startsWith('$') &&
+        fs.statSync(path.join(root, f)).isFile());
+    if (files.length === 0) {
+        throw new Error('❌ 未找到原 xlsx 文件，无法删列！\n');
+    }
+    let tplPath = null;
+    let workbook = null;
+    for (const f of files) {
+        try {
+            tplPath = path.join(root, f);
+            workbook = XLSX.readFile(tplPath);
+            break;
+        }
+        catch {
+            // 尝试下一个文件
+        }
+    }
+    if (!workbook) {
+        throw new Error('❌ 读取原 xlsx 失败，无法删列！\n');
+    }
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    // 删除所有列号 > maxCol 的单元格
+    for (const addr in worksheet) {
+        if (addr.startsWith('!')) {
+            continue; // 跳过 !ref / !merges / !autofilter 等特殊键
+        }
+        const cell = XLSX.utils.decode_cell(addr);
+        if (cell.c > maxCol) {
+            delete worksheet[addr];
+        }
+    }
+    // 收缩 !ref 到 maxCol
+    const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1');
+    if (range.e.c > maxCol) {
+        range.e.c = maxCol;
+    }
+    worksheet['!ref'] = XLSX.utils.encode_range(range);
+    XLSX.writeFile(workbook, tplPath);
+}
+/**
+ * 若所有行都已完成（doneRows 覆盖全部），就地删列收尾；否则保留文件以便续跑。
+ * 返回是否执行了删列。
+ */
+function trimColumnsIfAllDone(df, doneRows) {
+    if (df.length > 0 && doneRows.size >= df.length) {
+        trimColumnsInPlace(TRIM_MAX_COL);
+        console.log(`✂️  全部完成，已删除 AS 及之后的列（含 BB 标记），原文件即为最终产物\n`);
+        return true;
+    }
+    console.log(`⏸️  尚未全部完成（${doneRows.size}/${df.length}），保留全部列以便断点续跑\n`);
+    return false;
+}
+exports.TAG_COL = TAG_COL;
+exports.TAG_VALUE = TAG_VALUE;
+exports.TRIM_MAX_COL = TRIM_MAX_COL;
+exports.readDoneRows = readDoneRows;
+exports.markRowAndPersist = markRowAndPersist;
+exports.trimColumnsInPlace = trimColumnsInPlace;
+exports.trimColumnsIfAllDone = trimColumnsIfAllDone;
