@@ -10,7 +10,8 @@ const utils_1 = require("./utils");
 async function runAdq(df, idSelector) {
     // 启动浏览器
     const { browser, context } = await (0, utils_1.launchBrowser)('auth_state_adq.json');
-    const page = await context.newPage();
+    try {
+        const page = await context.newPage();
     // 登录
     await page.goto('https://ad.qq.com');
     (0, utils_1.waitForEnter)('确保当前已处于登录状态后，按下回车开始搭建！\n');
@@ -198,8 +199,11 @@ async function runAdq(df, idSelector) {
     // 全部完成则删列收尾；否则保留以便续跑
     (0, utils_1.trimColumnsIfAllDone)(df, doneRows);
     (0, utils_1.waitForEnter)('广告创建完成，plz press enter and continue');
-    await context.close();
-    await browser.close();
+    } finally {
+        // 即使中途抛错也确保关闭浏览器，避免残留 Chrome 进程
+        await context.close();
+        await browser.close();
+    }
 }
 /**
  * 构建"点位 → 营销组件设置函数"映射。
@@ -399,7 +403,8 @@ async function wxTvHengbanBp(page) {
  */
 async function runAdqCreTemplate(df, idSelector) {
     const { browser, context } = await (0, utils_1.launchBrowser)('auth_state_adq.json');
-    const page = await context.newPage();
+    try {
+        const page = await context.newPage();
     await page.goto('https://ad.qq.com');
     (0, utils_1.waitForEnter)('确保当前已处于登录状态后，按下回车开始创建定向模版！\n');
     await (0, utils_1.saveAuthState)(context, 'auth_state_adq.json');
@@ -437,15 +442,19 @@ async function runAdqCreTemplate(df, idSelector) {
         console.log(`第${i + 1}条定向模版 : 创建成功\n`);
     }
     (0, utils_1.waitForEnter)('所有定向模版创建成功，press Enter and quit');
-    await context.close();
-    await browser.close();
+    } finally {
+        // 即使中途抛错也确保关闭浏览器，避免残留 Chrome 进程
+        await context.close();
+        await browser.close();
+    }
 }
 /**
  * 替换创意
  */
 async function runAdqReplace(df) {
     const { browser, context } = await (0, utils_1.launchBrowser)('auth_state_adq.json');
-    const page = await context.newPage();
+    try {
+        const page = await context.newPage();
     await page.goto('https://ad.qq.com');
     (0, utils_1.waitForEnter)('确保当前已处于登录状态后，按下回车开始替换！\n');
     await (0, utils_1.saveAuthState)(context, 'auth_state_adq.json');
@@ -529,6 +538,9 @@ async function runAdqReplace(df) {
     // 全部完成则删列收尾；否则保留以便续跑
     (0, utils_1.trimColumnsIfAllDone)(df, doneRows);
     (0, utils_1.waitForEnter)('所有创意修改成功，press Enter and quit');
-    await context.close();
-    await browser.close();
+    } finally {
+        // 即使中途抛错也确保关闭浏览器，避免残留 Chrome 进程
+        await context.close();
+        await browser.close();
+    }
 }

@@ -11,6 +11,7 @@ async function runBili(df) {
     const accountId = Object.values(df[0])[35]; // 广告账户
     console.log(`创建账户: ${accountId}\n`);
     const { browser, context } = await (0, utils_1.launchBrowser)('auth_state_bili.json');
+    try {
     // 创建两个页面
     const page1 = await context.newPage();
     const page = await context.newPage();
@@ -227,8 +228,11 @@ async function runBili(df) {
     // 全部完成则删列收尾（删 AS 及之后，含 BB）；否则保留以便续跑
     (0, utils_1.trimColumnsIfAllDone)(df, doneRows);
     (0, utils_1.waitForEnter)('广告创建完成，plz press enter and continue');
-    await context.close();
-    await browser.close();
+    } finally {
+        // 即使中途抛错也确保关闭浏览器，避免残留 Chrome 进程
+        await context.close();
+        await browser.close();
+    }
 }
 /**
  * 从URL中提取campaign ID

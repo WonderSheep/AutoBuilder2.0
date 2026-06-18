@@ -7,11 +7,12 @@ const utils_1 = require("./utils");
  */
 async function runDy(df) {
     const { browser, context } = await (0, utils_1.launchBrowser)('auth_state_dy.json');
-    const page = await context.newPage();
-    // 登录
-    await page.goto('https://business.oceanengine.com/site/account-manage/ad/bidding/superior/account');
-    (0, utils_1.waitForEnter)('确保当前已处于登录状态后，按下回车开始搭建！\n');
-    await (0, utils_1.saveAuthState)(context, 'auth_state_dy.json');
+    try {
+        const page = await context.newPage();
+        // 登录
+        await page.goto('https://business.oceanengine.com/site/account-manage/ad/bidding/superior/account');
+        (0, utils_1.waitForEnter)('确保当前已处于登录状态后，按下回车开始搭建！\n');
+        await (0, utils_1.saveAuthState)(context, 'auth_state_dy.json');
     // 断点续跑：从 BB 列恢复已完成行
     const doneRows = (0, utils_1.readDoneRows)(df);
     console.log(`📦 恢复断点：已完成 ${doneRows.size} 条\n`);
@@ -99,6 +100,9 @@ async function runDy(df) {
     // 全部完成则删列收尾；否则保留以便续跑
     (0, utils_1.trimColumnsIfAllDone)(df, doneRows);
     (0, utils_1.waitForEnter)('广告创建完成，plz press enter and continue\n');
-    await context.close();
-    await browser.close();
+    } finally {
+        // 即使中途抛错也确保关闭浏览器，避免残留 Chrome 进程
+        await context.close();
+        await browser.close();
+    }
 }

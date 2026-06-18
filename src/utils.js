@@ -1,37 +1,4 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getCurrentDir = getCurrentDir;
 exports.getProjectRoot = getProjectRoot;
@@ -41,17 +8,15 @@ exports.saveAuthState = saveAuthState;
 exports.sleep = sleep;
 exports.readExcelFile = readExcelFile;
 exports.readTxtFile = readTxtFile;
-exports.saveExcelFile = saveExcelFile;
 exports.getUrlParam = getUrlParam;
 exports.promptUser = promptUser;
 exports.waitForEnter = waitForEnter;
-exports.trimAndSaveExcel = trimAndSaveExcel;
 exports.writeBackInPlace = writeBackInPlace;
-const fs = __importStar(require("fs"));
-const path = __importStar(require("path"));
-const os = __importStar(require("os"));
-const XLSX = __importStar(require("xlsx"));
-const iconv = __importStar(require("iconv-lite"));
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const XLSX = require("xlsx");
+const iconv = require("iconv-lite");
 const playwright_1 = require("playwright");
 /**
  * 获取当前脚本的执行目录（使用相对路径）
@@ -249,68 +214,6 @@ function readTxtFile() {
     throw new Error('❌ 未找到有效.txt文件，请确保项目目录有非临时的txt文件！\n');
 }
 /**
- * 保存Excel文件
- */
-function saveExcelFile(data, filename = 'media_id_检查无误后可上传MOP.xlsx') {
-    // 读取原始模板，保留Sheet名称、样式、自动筛选等格式
-    const tplFiles = fs.readdirSync(getProjectRoot())
-        .filter(f => f.endsWith('.xlsx'));
-    if (tplFiles.length === 0) {
-        throw new Error('❌ 未找到任何xlsx模板文件，无法保留格式！');
-    }
-    const tplPath = path.join(getProjectRoot(), tplFiles[0]);
-    const workbook = XLSX.readFile(tplPath);
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-
-    // 读取模板表头（第1行）
-    const headerRow = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' })[0];
-    const headers = headerRow.filter(h => h); // 过滤掉空列头
-
-    // 清除旧数据（保留第1行表头），从第2行开始清除
-    const range = XLSX.utils.decode_range(worksheet['!ref']);
-    for (let R = range.s.r + 1; R <= range.e.r; ++R) {
-        for (let C = range.s.c; C <= range.e.c; ++C) {
-            const addr = XLSX.utils.encode_cell({ r: R, c: C });
-            delete worksheet[addr];
-        }
-    }
-
-    // 写入新数据（从第2行开始）
-    data.forEach((row, rowIdx) => {
-        headers.forEach((header, colIdx) => {
-            if (row[header] !== undefined) {
-                const addr = XLSX.utils.encode_cell({ r: rowIdx + 1, c: colIdx });
-                worksheet[addr] = { t: 's', v: String(row[header]) };
-            }
-        });
-    });
-
-    // 删除AS列之后的列（只保留A-AS，即列索引0-44）
-    const maxCol = 44; // AS列对应索引44（A=0, ... AS=44）
-    const newEndRow = Math.max(data.length, range.e.r);
-    for (let R = 0; R <= newEndRow; ++R) {
-        for (let C = maxCol + 1; C <= range.e.c; ++C) {
-            const addr = XLSX.utils.encode_cell({ r: R, c: C });
-            delete worksheet[addr];
-        }
-    }
-
-    // 更新数据范围
-    const newEndCol = Math.min(headerRow.length - 1, maxCol);
-    worksheet['!ref'] = XLSX.utils.encode_range({
-        s: { r: 0, c: 0 },
-        e: { r: newEndRow, c: newEndCol }
-    });
-
-    // 清除自动筛选
-    delete worksheet['!autofilter'];
-
-    const outputPath = path.join(getProjectRoot(), filename);
-    XLSX.writeFile(workbook, outputPath);
-    console.log(`✅ 文件已保存（基于模板格式）：${outputPath}\n`);
-}
-/**
  * 从URL中提取查询参数
  */
 function getUrlParam(url, paramName) {
@@ -330,20 +233,6 @@ function promptUser(question) {
 function waitForEnter(message) {
     const readline = require('readline-sync');
     readline.question(message);
-}
-/**
- * 输出文件到Excel（只保留前44列）
- */
-function trimAndSaveExcel(data, columns = 44) {
-    const trimmedData = data.map(row => {
-        const newRow = {};
-        const keys = Object.keys(row);
-        for (let i = 0; i < Math.min(columns, keys.length); i++) {
-            newRow[keys[i]] = row[keys[i]];
-        }
-        return newRow;
-    });
-    saveExcelFile(trimmedData);
 }
 /**
  * 就地把每行指定列写回根目录的原 xlsx（保留原工作簿的全部格式）。
