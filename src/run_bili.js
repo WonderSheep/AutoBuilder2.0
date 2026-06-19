@@ -9,7 +9,6 @@ const CAMPAIGN_ID_COL = 43;
  */
 async function runBili(df) {
     const accountId = Object.values(df[0])[35]; // 广告账户
-    console.log(`创建账户: ${accountId}\n`);
     const { browser, context } = await (0, utils_1.launchBrowser)('auth_state_bili.json');
     try {
     // 创建两个页面
@@ -39,13 +38,13 @@ async function runBili(df) {
         '竖版视频流_视频': '竖屏视频流',
         '动态区信息流_视频': '动态区信息流',
         '横版视频': '信息流大卡',
-        '播放页_图片': '播放页'
+        '播放页_图片': '播放页',
+        '播放暂停页': '播放暂停页'
     };
     for (let index = 0; index < df.length; index++) {
         const row = df[index];
         // 断点续跑：已完成（BB 列有标记）的行直接跳过
         if (doneRows.has(index)) {
-            console.log(`第${index + 1}条广告 : 已完成，跳过\n`);
             continue;
         }
         const values = Object.values(row);
@@ -62,11 +61,16 @@ async function runBili(df) {
         const dpLink = values[29] || ''; // deeplink
         const impTLink = values[30]; // 曝光监测链接
         const clkTlink = values[31]; // 点击监测链接
-        const cooperation1 = values.length > 39 ? values[39] : ''; // 合作协议1
-        const cooperation2 = values.length > 40 ? values[40] : ''; // 合作协议2
+        const cooperation1 = values.length > 40 ? values[40] : ''; // 合作协议1
+        const cooperation2 = values.length > 41 ? values[41] : ''; // 合作协议2
         const assetNm = values[36]; // 图片或视频名称
         const copywritingTle = values[37]; // 素材标题
         const copywritingDsc = values[38]; // 素材描述
+        const paucePage = values[39]; // 暂停广告落地页（仅"播放暂停页"点位必填）
+        // 校验：点位为「播放暂停页」时，paucePage 不能为空
+        if (String(pagePst).trim() === '播放暂停页' && String(paucePage || '').trim() === '') {
+            throw new Error(`第${index + 1}条：点位为「播放暂停页」但 paucePage（第40列）为空，请补齐后重跑`);
+        }
         // 添加小程序
         const miniNm = `${strategyId}_${Date.now()}`;
         if (miniLink !== '') {
@@ -140,7 +144,7 @@ async function runBili(df) {
         // 点击和播放3秒监控
         await page.getByRole('textbox', { name: '请输入https链接开头的URL' }).nth(1).fill(String(clkTlink));
         // 点位
-        await (0, utils_1.sleep)(250);
+        await (0, utils_1.sleep)(500);
         await page.locator('span.ivu-switch.ivu-switch-small').nth(0).click();
         const positionText = pagePositionMap[pagePst] || String(pagePst);
         await page.getByRole('checkbox', { name: positionText }).check();
@@ -190,6 +194,11 @@ async function runBili(df) {
         await page.getByRole('textbox', { name: '请输入2 ~ 10个字，即客户端广告卡片中UP' }).fill(String(copywritingDsc));
         // 自定义落地页
         await page.getByRole('textbox', { name: '请使用https链接开头的URL', exact: true }).fill(String(basicLp));
+        // 暂停广告落地页（仅"播放暂停页"点位，且 paucePage 非空时才填）
+        if (String(pagePst).trim() === '播放暂停页' && String(paucePage || '').trim() !== '') {
+            await page.getByRole('textbox', { name: '请选择暂停广告落地页' }).click();
+            await page.locator('div[data-v-5966dc7c]').filter({ hasText: String(paucePage) }).first().click();
+        }
         // 品牌头像
         if (await page.getByRole('textbox', { name: '请选择品牌名称' }).isVisible()) {
             await page.getByRole('textbox', { name: '请选择品牌名称' }).click();
@@ -214,7 +223,6 @@ async function runBili(df) {
                 planDict[planNm] = campaignId;
                 // 立即回写计划ID，防止在此之后崩溃导致重复建计划
                 (0, utils_1.markRowAndPersist)(df, index, [{ col: CAMPAIGN_ID_COL, value: campaignId }]);
-                console.log(`💾 计划ID 已回写 Excel，可断点续跑\n`);
             }
         }
         // 标记本单元完成并回写 BB，下次重跑到此行可直接跳过

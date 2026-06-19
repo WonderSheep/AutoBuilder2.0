@@ -46,7 +46,6 @@ async function runAdq(df, idSelector) {
         const row = df[index];
         // 断点续跑：已完成（BB 列有标记）的行直接跳过
         if (doneRows.has(index)) {
-            console.log(`第${index + 1}条广告 : 已完成，跳过\n`);
             continue;
         }
         const values = Object.values(row);
@@ -74,7 +73,6 @@ async function runAdq(df, idSelector) {
         const floatCard = String(values[51] || '').trim(); // 视频号浮层卡片
         // 营销组件映射（依赖本行 actionBtn/firstReply/floatCard/tvTag，故每行重建）
         const componentMap = buildComponentMap(page, actionBtn, firstReply, floatCard, tvTag);
-        console.log(`创建账户: ${accountId}`);
         const unitNm = `${strategyId}_${campaignNm}_${media}_${pagePst}_${creativeNm}_${audience}_${audienceTag}_${city}`;
         await page.goto(`https://ad.qq.com/atlas/${accountId}/addelivery/adgroups-add?ref_adgroup_id=${copyAd}`);
         await (0, utils_1.sleep)(3000);
@@ -465,7 +463,6 @@ async function runAdqReplace(df) {
         const row = df[index];
         // 断点续跑：已完成（BB 列有标记）的行直接跳过
         if (doneRows.has(index)) {
-            console.log(`第${index + 1}条创意 : 已完成，跳过\n`);
             continue;
         }
         const values = Object.values(row);

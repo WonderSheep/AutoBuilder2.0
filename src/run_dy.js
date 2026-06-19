@@ -20,7 +20,6 @@ async function runDy(df) {
         const row = df[index];
         // 断点续跑：已完成（BB 列有标记）的行直接跳过
         if (doneRows.has(index)) {
-            console.log(`第${index + 1}条广告 : 已完成，跳过\n`);
             continue;
         }
         const values = Object.values(row);
@@ -38,14 +37,12 @@ async function runDy(df) {
         const copyUn = values[43]; // 复制的单元
         const audienceMd = values[44]; // 媒体人群
         const audienceTag = values[45]; // 人群类型
-        console.log(`创建账户: ${accountId}`);
         const unitNm = `${strategyId}_${campaignNm}_${creativeNm}_${rtaId}_${audienceTag}_${audience}_${city}_${sellType}_${Date.now()}`;
         // 断点续跑：若该行已建过项目（上次崩在建项目之后），复用 project_id 直接建单元，避免重复建项目
         const existingProjectId = String(values[41] || '').trim();
         let projectId;
         if (existingProjectId) {
             projectId = existingProjectId;
-            console.log(`第${index + 1}条：检测到已建项目 ${projectId}，跳过建项目、直接建单元\n`);
         }
         else {
             await page.goto(`https://ad.oceanengine.com/superior/create-project?aadvid=${accountId}&is_copy=1&project_id=${copyAd}`);
