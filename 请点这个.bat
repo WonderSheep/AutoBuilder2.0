@@ -20,4 +20,4 @@ if not exist "node_modules" if not exist "src\node_modules" (
 
 "%~dp0src\node.exe" "%~dp0src\index.js"
 
-pause
+if errorlevel 1 pause

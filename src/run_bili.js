@@ -128,7 +128,7 @@ async function runBili(df) {
             await editTime.click({ timeout: 2000 });
         }
         catch {
-            await page.locator('span[data-v-53fbd318].vm').filter({ hasText: /^展开关联产品、投放日期、频次和搜索快投等内容$/ }).click();
+            await page.locator('i[data-v-53fbd318].bili-iconfont.bili-icon-chevron-down.vm.pl-4').click();
             await editTime.click();
         }
         await page.getByRole('link', { name: '全部清除' }).click();
@@ -233,8 +233,7 @@ async function runBili(df) {
         ]);
         console.log(`第${index + 1}条广告 : ${unitNm} 创建成功\n`);
     }
-    // 全部完成则删列收尾（删 AS 及之后，含 BB）；否则保留以便续跑
-    (0, utils_1.trimColumnsIfAllDone)(df, doneRows);
+    // B站：不删列收尾（保留 AS 及之后所有列，含 BB 标记）
     (0, utils_1.waitForEnter)('广告创建完成，plz press enter and continue');
     } finally {
         // 即使中途抛错也确保关闭浏览器，避免残留 Chrome 进程
