@@ -197,7 +197,7 @@ async function runBili(df) {
         // 暂停广告落地页（仅"播放暂停页"点位，且 paucePage 非空时才填）
         if (String(pagePst).trim() === '播放暂停页' && String(paucePage || '').trim() !== '') {
             await page.getByRole('textbox', { name: '请选择暂停广告落地页' }).click();
-            await page.locator('div[data-v-5966dc7c]').filter({ hasText: String(paucePage) }).first().click();
+            await page.locator('div[data-v-5966dc7c]').filter({ hasText: new RegExp(`^${String(paucePage)}$`) }).first().click();
         }
         // 品牌头像
         if (await page.getByRole('textbox', { name: '请选择品牌名称' }).isVisible()) {
