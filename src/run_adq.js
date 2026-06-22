@@ -66,13 +66,12 @@ async function runAdq(df, idSelector) {
         const assetNm = values[45]; // 图片或视频ID/名称
         const copywriting = values[46]; // 文案
         const logo = String(values[47] || '').trim() || '肯德基'; // 品牌形象（直接填中文，空则默认肯德基）
-        const actionBtnInput = String(values[48] || '').trim(); // 行动按钮
-        const actionBtn = actionBtnInput === '' ? '立即购买' : actionBtnInput;
-        const tvTag = String(values[49] || '').trim(); // 标签
+        const actionBtn = String(values[48] || '').trim() || '立即购买'; // 行动按钮（空则默认立即购买）
+        const tagtag = String(values[49] || '').trim(); // 标签
         const firstReply = String(values[50] || '').trim(); // 首评回复
         const floatCard = String(values[51] || '').trim(); // 视频号浮层卡片
-        // 营销组件映射（依赖本行 actionBtn/firstReply/floatCard/tvTag，故每行重建）
-        const componentMap = buildComponentMap(page, actionBtn, firstReply, floatCard, tvTag);
+        // 营销组件映射（依赖本行 actionBtn/firstReply/floatCard/tagtag，故每行重建）
+        const componentMap = buildComponentMap(page, actionBtn, firstReply, floatCard, tagtag);
         const unitNm = `${strategyId}_${campaignNm}_${media}_${pagePst}_${creativeNm}_${audience}_${audienceTag}_${city}`;
         await page.goto(`https://ad.qq.com/atlas/${accountId}/addelivery/adgroups-add?ref_adgroup_id=${copyAd}`);
         await (0, utils_1.sleep)(3000);
@@ -205,24 +204,24 @@ async function runAdq(df, idSelector) {
 }
 /**
  * 构建"点位 → 营销组件设置函数"映射。
- * 因 actionBtn/firstReply/floatCard/tvTag 现按行从 Excel 读取，故每行调用一次重建。
+ * 因 actionBtn/firstReply/floatCard/tagtag 现按行从 Excel 读取，故每行调用一次重建。
  */
-function buildComponentMap(page, actionBtn, firstReply, floatCard, tvTag) {
+function buildComponentMap(page, actionBtn, firstReply, floatCard, tagtag) {
     return {
-        '朋友圈-卡片广告-横版大图-行动按钮': () => wxFriendsCardBp(page, actionBtn, firstReply),
-        '朋友圈-卡片广告-横版大图': () => wxFriendsCardBp(page, actionBtn, firstReply),
-        '朋友圈-卡片广告-横版视频-行动按钮': () => wxFriendsCardVideo(page, actionBtn, firstReply),
-        '朋友圈-卡片广告-横版视频': () => wxFriendsCardVideo(page, actionBtn, firstReply),
+        '朋友圈-卡片广告-横版大图-行动按钮': () => wxFriendsCardBp(page, actionBtn, firstReply, tagtag),
+        '朋友圈-卡片广告-横版大图': () => wxFriendsCardBp(page, actionBtn, firstReply, tagtag),
+        '朋友圈-卡片广告-横版视频-行动按钮': () => wxFriendsCardVideo(page, actionBtn, firstReply, tagtag),
+        '朋友圈-卡片广告-横版视频': () => wxFriendsCardVideo(page, actionBtn, firstReply, tagtag),
         '朋友圈-竖版大图': () => wxFriendsShubanBp(page, actionBtn, firstReply),
         '朋友圈-橱窗广告-图片': () => wxFriendsWindows(page, actionBtn, firstReply),
         '订阅号消息列表-横版大图': () => wxSubBp(page, actionBtn),
         '订阅号消息列表-横版视频': () => wxSubVideo(page, actionBtn),
         '小程序封面广告': () => wxMiniProShubanBp(page),
-        '视频号-竖版视频': () => wxTvShubanVideo(page, floatCard, tvTag),
-        '视频号-横版视频': () => wxTvHengbanVideo(page, floatCard, tvTag),
-        //'视频号评论区广告': () => wxTvShubanVideo(page, floatCard, tvTag), 废弃
-        '视频号评论区广告-竖版视频': () => wxTvShubanVideo(page, floatCard, tvTag),
-        '视频号评论区广告-横版视频': () => wxTvHengbanVideo(page, floatCard, tvTag),
+        '视频号-竖版视频': () => wxTvShubanVideo(page, floatCard, tagtag),
+        '视频号-横版视频': () => wxTvHengbanVideo(page, floatCard, tagtag),
+        //'视频号评论区广告': () => wxTvShubanVideo(page, floatCard, tagtag), 废弃
+        '视频号评论区广告-竖版视频': () => wxTvShubanVideo(page, floatCard, tagtag),
+        '视频号评论区广告-横版视频': () => wxTvHengbanVideo(page, floatCard, tagtag),
         '视频号评论区广告-竖版大图': () => wxTvShubanBp(page),
         '视频号评论区广告-横版大图': () => wxTvHengbanBp(page),
         '竖版大图': () => gdtShubanBp(page, actionBtn),
@@ -231,11 +230,14 @@ function buildComponentMap(page, actionBtn, firstReply, floatCard, tvTag) {
     };
 }
 // 营销组件函数
-async function wxFriendsCardBp(page, actionBtn, firstReply) {
+async function wxFriendsCardBp(page, actionBtn, firstReply, tagtag) {
     await page.getByText('营销组件').first().click();
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '客服问答' }).click();
-    if (firstReply === '') {
-        await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '首评回复' }).click();
+    //if (firstReply === '') {
+    //    await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '首评回复' }).click();
+    //}
+    if (tagtag !== '') {
+        await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '标签' }).click();
     }
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '行动按钮' }).click();
     await page.locator('span.odc-text.ellipsis').filter({ hasText: '行动按钮' }).click();
@@ -244,16 +246,23 @@ async function wxFriendsCardBp(page, actionBtn, firstReply) {
     const selector = await page.waitForSelector(`div.selection-name[data-value="${actionBtn}"]`, { timeout: 3000 });
     await selector.click();
     await page.getByRole('button', { name: '确定' }).click();
+    if (tagtag !== '') {
+        await page.locator('span.odc-text.ellipsis').filter({ hasText: '标签' }).click();
+        await page.locator('div.tw-inline-flex.tw-items-center.tw-cursor-pointer.tw-transition-colors').filter({ hasText: new RegExp(`^${tagtag}$`) }).first().click();
+    }
     if (firstReply !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '首评回复' }).click();
         await page.getByText(firstReply).first().click();
     }
 }
-async function wxFriendsCardVideo(page, actionBtn, firstReply) {
+async function wxFriendsCardVideo(page, actionBtn, firstReply, tagtag) {
     await page.getByText('营销组件').first().click();
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '客服问答' }).click();
-    if (firstReply === '') {
-        await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '首评回复' }).click();
+    //if (firstReply === '') {
+    //    await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '首评回复' }).click();
+    //}
+    if (tagtag !== '') {
+        await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '标签' }).click();
     }
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '行动按钮' }).click();
     await page.locator('span.odc-text.ellipsis').filter({ hasText: '行动按钮' }).click();
@@ -262,6 +271,10 @@ async function wxFriendsCardVideo(page, actionBtn, firstReply) {
     const selector = await page.waitForSelector(`div.selection-name[data-value="${actionBtn}"]`, { timeout: 3000 });
     await selector.click();
     await page.getByRole('button', { name: '确定' }).click();
+    if (tagtag !== '') {
+        await page.locator('span.odc-text.ellipsis').filter({ hasText: '标签' }).click();
+        await page.locator('div.tw-inline-flex.tw-items-center.tw-cursor-pointer.tw-transition-colors').filter({ hasText: new RegExp(`^${tagtag}$`) }).first().click();
+    }
     if (firstReply !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '首评回复' }).click();
         await page.getByText(firstReply).first().click();
@@ -331,30 +344,30 @@ async function wxMiniProShubanBp(page) {
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '图文链接' }).click();
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '标签' }).click();
 }
-async function wxTvShubanVideo(page, floatCard, tvTag) {
+async function wxTvShubanVideo(page, floatCard, tagtag) {
     await page.getByText('营销组件').first().click();
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '图文链接' }).click();
-    if (tvTag === '') {
+    if (tagtag === '') {
         await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '标签' }).click();
     }
     await page.locator('span.odc-text.ellipsis').filter({ hasText: '浮层卡片' }).click();
     await page.locator('span.tw-text-xs.tw-text-text-secondary.tw-font-semibold.tw-truncate').filter({ hasText: floatCard }).click();
-    if (tvTag !== '') {
+    if (tagtag !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '标签' }).click();
-        await page.locator('div.tw-inline-flex.tw-items-center.tw-cursor-pointer.tw-transition-colors').filter({ hasText: new RegExp(`^${tvTag}$`) }).first().click();
+        await page.locator('div.tw-inline-flex.tw-items-center.tw-cursor-pointer.tw-transition-colors').filter({ hasText: new RegExp(`^${tagtag}$`) }).first().click();
     }
 }
-async function wxTvHengbanVideo(page, floatCard, tvTag) {
+async function wxTvHengbanVideo(page, floatCard, tagtag) {
     await page.getByText('营销组件').first().click();
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '图文链接' }).click();
-    if (tvTag === '') {
+    if (tagtag === '') {
         await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '标签' }).click();
     }
     await page.locator('span.odc-text.ellipsis').filter({ hasText: '浮层卡片' }).click();
     await page.locator('span.tw-text-xs.tw-text-text-secondary.tw-font-semibold.tw-truncate').filter({ hasText: floatCard }).click();
-    if (tvTag !== '') {
+    if (tagtag !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '标签' }).click();
-        await page.locator('div.tw-inline-flex.tw-items-center.tw-cursor-pointer.tw-transition-colors').filter({ hasText: new RegExp(`^${tvTag}$`) }).first().click();
+        await page.locator('div.tw-inline-flex.tw-items-center.tw-cursor-pointer.tw-transition-colors').filter({ hasText: new RegExp(`^${tagtag}$`) }).first().click();
     }
 }
 async function gdtShubanBp(page, actionBtn) {
