@@ -158,6 +158,14 @@ function readExcelFile() {
                 const sheetName = workbook.SheetNames[0];
                 const worksheet = workbook.Sheets[sheetName];
                 const data = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+                // 统一去除所有字符串单元格的头尾空格/回车，避免脏数据干扰匹配
+                for (const row of data) {
+                    for (const key of Object.keys(row)) {
+                        if (typeof row[key] === 'string') {
+                            row[key] = row[key].trim();
+                        }
+                    }
+                }
                 console.log(`✅ 成功读取文件：${filename}\n`);
                 return data;
             }
