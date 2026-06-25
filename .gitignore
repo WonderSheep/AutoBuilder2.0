@@ -1,7 +1,7 @@
 node_modules
 temp
-auth_state_adq.json
-auth_state_bili.json
-bird-game.html
-cube-game.html
-snake-game.html
+auth_state_*.json
+*.html
+*.zip
+*.xlsx
+.claude/
