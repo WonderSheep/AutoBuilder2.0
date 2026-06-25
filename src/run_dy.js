@@ -22,6 +22,16 @@ async function runDy(df) {
         if (doneRows.has(index)) {
             continue;
         }
+        // ─── 抖音(dy) 列约定（列号均为 0-based）与断点续跑 ───
+        // 数据：0策略ID 2活动名 18脱敏人群 20创意名 23区域 26购买类型
+        //       35曝光监测 36点击监测 39RTA 40广告账户 44媒体人群 45人群类型
+        // 复制源：AP(41)=复制源项目copyAd   AQ(42)=复制源单元copyUn
+        // 标志位：BA(52)='1' 项目已建     BB(53)='1' 整行完成（readDoneRows 据此跳过整行）
+        // 续跑写入：建完项目→project_id 写回 AP(覆盖copyAd) 且 BA 置 '1'；
+        //          建完单元→清空 AQ 且 BB 置 '1'。
+        // 重跑判定：BB='1' 整行跳过；仅 BA='1'（项目已建、单元没建完）则跳过建项目、
+        //          复用 AP 里的 project_id 直接建单元，避免重复建项目。
+        // 收尾：BA/BB(52/53) 超出 trim 上限(43)，全部完成后自动删除；AP 的 project_id 保留进交付表。
         const values = Object.values(row);
         const strategyId = values[0]; // 策略ID
         const campaignNm = values[2]; // 活动名称
@@ -33,16 +43,16 @@ async function runDy(df) {
         const clkTlink = values[36]; // 点击监测链接
         const rtaId = values[39]; // RTA ID
         const accountId = values[40]; // 广告账户
-        const copyAd = values[42]; // 复制的项目
-        const copyUn = values[43]; // 复制的单元
+        const copyAd = values[41]; // 复制的项目
+        const copyUn = values[42]; // 复制的单元
         const audienceMd = values[44]; // 媒体人群
         const audienceTag = values[45]; // 人群类型
         const unitNm = `${strategyId}_${campaignNm}_${creativeNm}_${rtaId}_${audienceTag}_${audience}_${city}_${sellType}_${Date.now()}`;
-        // 断点续跑：若该行已建过项目（上次崩在建项目之后），复用 project_id 直接建单元，避免重复建项目
-        const existingProjectId = String(values[41] || '').trim();
+        // 断点续跑：BA(52)='1' 表示项目已建过（上次崩在建项目之后），复用 AP(41) 的 project_id 直接建单元，避免重复建项目
+        const projectBuilt = String(values[52] || '').trim() === utils_1.TAG_VALUE;
         let projectId;
-        if (existingProjectId) {
-            projectId = existingProjectId;
+        if (projectBuilt) {
+            projectId = String(values[41] || '').trim();
         }
         else {
             await page.goto(`https://ad.oceanengine.com/superior/create-project?aadvid=${accountId}&is_copy=1&project_id=${copyAd}`);
@@ -75,8 +85,15 @@ async function runDy(df) {
             // project_id
             await page.getByRole('button', { name: '项目工具' }).waitFor({ state: 'visible', timeout: 300000 });
             projectId = (0, utils_1.getUrlParam)(page.url(), 'project_id');
-            // 立即回写 project_id，防止在建单元途中崩溃导致重复建项目
-            (0, utils_1.markRowAndPersist)(df, index, [{ col: 41, value: projectId }]);
+            // 未抠到 project_id 说明项目未真正创建成功：抛错（不置 BA）让本行下次重试，避免置 BA 后该行卡死
+            if (!projectId) {
+                throw new Error(`第${index + 1}行：保存项目后未获取到 project_id，项目可能未创建成功，请检查后重跑`);
+            }
+            // 立即回写：AP(41) 记录新 project_id（覆盖已用完的 copyAd），BA(52) 置 '1' 标记项目已建，防止在建单元途中崩溃导致重复建项目
+            (0, utils_1.markRowAndPersist)(df, index, [
+                { col: 41, value: projectId },
+                { col: 52, value: utils_1.TAG_VALUE },
+            ]);
         }
         // 单元
         await page.goto(`https://ad.oceanengine.com/superior/ads?aadvid=${accountId}&is_copy=1&project_id=${projectId}&campaign_type=1&ad_count=1&promotion_id=${copyUn}&copy_type=3`);
@@ -86,7 +103,7 @@ async function runDy(df) {
         // 保存
         await page.getByRole('button', { name: '保存并关闭' }).click();
         await page.getByRole('button', { name: '项目工具' }).waitFor({ state: 'visible', timeout: 300000 });
-        // 清空复制源 copyAd（keys[42]）+ 回写 BB 完成标记（断点续跑）
+        // 清空复制单元源 copyUn（AQ列/keys[42]）+ 回写 BB 完成标记（断点续跑）
         doneRows.add(index);
         (0, utils_1.markRowAndPersist)(df, index, [
             { col: 42, value: null },

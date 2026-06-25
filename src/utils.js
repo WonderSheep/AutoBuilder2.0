@@ -12,6 +12,7 @@ exports.getUrlParam = getUrlParam;
 exports.promptUser = promptUser;
 exports.waitForEnter = waitForEnter;
 exports.writeBackInPlace = writeBackInPlace;
+exports.assertExcelWritable = assertExcelWritable;
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
@@ -176,6 +177,45 @@ function readExcelFile() {
         }
     }
     throw new Error('❌ 未找到有效.xlsx文件，请确保项目目录有非临时的xlsx文件！\n');
+}
+/**
+ * 启动前检测：Excel 文件是否被占用（在 Excel 中打开会独占写权限，导致回写断点状态静默失败）。
+ * 用 'r+' 申请读写权限尝试打开：能打开说明未被占用（立即关闭，不改动文件）；抛错说明被占用。
+ */
+function assertExcelWritable() {
+    const root = getProjectRoot();
+    const files = fs.readdirSync(root);
+    let target = null;
+    for (const filename of files) {
+        const isValid = filename.endsWith('.xlsx') &&
+            !filename.startsWith('~$') &&
+            !filename.startsWith('$') &&
+            fs.statSync(path.join(root, filename)).isFile();
+        if (isValid) {
+            target = filename;
+            break;
+        }
+    }
+    if (!target) {
+        throw new Error('❌ 未找到有效的 .xlsx 文件，无法检测是否被占用\n');
+    }
+    const fullPath = path.join(root, target);
+    let fd;
+    try {
+        fd = fs.openSync(fullPath, 'r+'); // 申请读写权限；Excel 占用时抛 EBUSY/EPERM/EACCES
+    }
+    catch (e) {
+        if (e && (e.code === 'EBUSY' || e.code === 'EPERM' || e.code === 'EACCES')) {
+            throw new Error(`❌ Excel 文件 "${target}" 被占用（或无写权限），请在 Excel 中关闭后重试\n`);
+        }
+        throw e; // 其它异常原样抛出
+    }
+    finally {
+        if (fd !== undefined) {
+            fs.closeSync(fd);
+        }
+    }
+    console.log(`✅ Excel 未被占用，可正常回写：${target}\n`);
 }
 /**
  * 读取TXT文件（每行一个内容）

@@ -13,6 +13,8 @@ async function main() {
     console.log('      广告自动化搭建工具 v2.0 (TS)     ');
     console.log('========================================\n');
     try {
+        // 启动前检测：Excel 必须关闭，否则回写断点状态会静默失败、重启可能产生重复
+        (0, utils_1.assertExcelWritable)();
         // 读取Excel文件
         const df = (0, utils_1.readExcelFile)();
         // 获取数据信息

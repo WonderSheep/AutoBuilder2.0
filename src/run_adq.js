@@ -48,6 +48,18 @@ async function runAdq(df, idSelector) {
         if (doneRows.has(index)) {
             continue;
         }
+        // ─── 腾讯(adq) 列约定（列号均为 0-based）与断点续跑 ───
+        // 数据：0策略ID 2活动名 13媒体 15点位 18脱敏人群 20创意名 23区域
+        //       29deeplink 31小程序链接 32落地页类型 40广告账户
+        //       44人群标签 45素材 46文案 47品牌形象 48行动按钮 49标签 50首评回复 51浮层卡片
+        // 复制源：col42=复制源广告copyAd（选点位成功后覆盖为 adgroupId）
+        // 回写ID：col43=dynamicCreativeId
+        // 标志位：BA(52)='1' 广告组已建   BB(53)='1' 整行完成（readDoneRows 据此跳过整行）
+        // 续跑写入：选点位成功（=广告层级已建）→adgroupId 写回 col42(覆盖copyAd) 且 BA 置 '1'；
+        //          提交创意后→dynamicCreativeId 写 col43 且 BB 置 '1'。
+        // 重跑判定：BB='1' 整行跳过；仅 BA='1'（广告组已建、创意没建完）则直达
+        //          creatives-add?adgroup_id= 重选点位+继续创意，跳过广告组创建，避免重复建广告组。
+        // 收尾：BA/BB(52/53) 超出 trim 上限(43)，全部完成后自动删除；col42 的 adgroupId 保留进交付表。
         const values = Object.values(row);
         const strategyId = values[0]; // 策略ID
         const campaignNm = values[2]; // 活动名称
@@ -73,6 +85,14 @@ async function runAdq(df, idSelector) {
         // 营销组件映射（依赖本行 actionBtn/firstReply/floatCard/tagtag，故每行重建）
         const componentMap = buildComponentMap(page, actionBtn, firstReply, floatCard, tagtag);
         const unitNm = `${strategyId}_${campaignNm}_${media}_${pagePst}_${creativeNm}_${audience}_${audienceTag}_${city}`;
+        // 断点续跑：BA(52)='1' 表示广告组已建过，直达创意配置页跳过广告组创建
+        const adgroupBuilt = String(values[52] || '').trim() === utils_1.TAG_VALUE;
+        let adgroupId;
+        if (adgroupBuilt) {
+            adgroupId = String(values[42] || '').trim();
+            await page.goto(`https://ad.qq.com/atlas/${accountId}/delivery-page/creatives-add?adgroup_id=${adgroupId}`);
+        }
+        if (!adgroupBuilt) {
         await page.goto(`https://ad.qq.com/atlas/${accountId}/addelivery/adgroups-add?ref_adgroup_id=${copyAd}`);
         await (0, utils_1.sleep)(3000);
         // 人群定向 - 排除人群（按行序 index+1 取避投组合，断点续跑跳过行不会错位）
@@ -106,6 +126,7 @@ async function runAdq(df, idSelector) {
         else {
             await creButton.click();
         }
+        }
         // 创意部分
         // 选点位
         await page.locator('button#creative-type-btn').click();
@@ -115,6 +136,18 @@ async function runAdq(df, idSelector) {
         }
         await page.locator('span.odc-text.ellipsis').filter({ hasText: positionText }).click();
         await page.getByRole('button', { name: '确定' }).click();
+        // 点位选成功即代表广告层级已建：首次抓 adgroup_id 回写（覆盖 copyAd + BA 置 '1'），防崩在建创意途中重复建广告组
+        if (!adgroupBuilt) {
+            adgroupId = (0, utils_1.getUrlParam)(page.url(), 'adgroup_id');
+            // 未抠到 adgroup_id 说明广告组未真正创建成功：抛错（不置 BA）让本行下次重试，避免置 BA 后该行卡死
+            if (!adgroupId) {
+                throw new Error(`第${index + 1}行：选点位后未获取到 adgroup_id，广告组可能未创建成功，请检查后重跑`);
+            }
+            (0, utils_1.markRowAndPersist)(df, index, [
+                { col: 42, value: adgroupId },
+                { col: 52, value: utils_1.TAG_VALUE },
+            ]);
+        }
         // 图片或视频
         if (pagePst === '朋友圈-橱窗广告-图片') {
             await page.locator('div.spaui-form-group-prefix button.x-filter-btn.spaui-button.spaui-button-text.spaui-button-sm.with-icon').first().click();
@@ -182,12 +215,10 @@ async function runAdq(df, idSelector) {
         // 去编辑
         await page.getByRole('button', { name: '编辑' }).first().waitFor({ state: 'visible', timeout: 300000 });
         const jumpUrl = await page.getByRole('button', { name: '编辑' }).first().getAttribute('href') || '';
-        const adgroupId = (0, utils_1.getUrlParam)(jumpUrl, 'adgroup_id');
         const dynamicCreativeId = (0, utils_1.getUrlParam)(jumpUrl, 'dynamic_creative_id');
-        // 回写 ID + BB 完成标记到原文件（断点续跑）
+        // 回写 dynamicCreativeId + BB 完成标记（adgroupId 已在选点位后写入 col42）
         doneRows.add(index);
         (0, utils_1.markRowAndPersist)(df, index, [
-            { col: 42, value: adgroupId },
             { col: 43, value: dynamicCreativeId },
             { col: utils_1.TAG_COL, value: utils_1.TAG_VALUE },
         ]);
