@@ -11,7 +11,7 @@ async function runAdq(df, idSelector) {
     // 启动浏览器
     const { browser, context } = await (0, utils_1.launchBrowser)('auth_state_adq.json');
     try {
-        const page = await context.newPage();
+        let page = await context.newPage();
     // 登录
     await page.goto('https://ad.qq.com');
     (0, utils_1.waitForEnter)('确保当前已处于登录状态后，按下回车开始搭建！\n');
@@ -41,13 +41,15 @@ async function runAdq(df, idSelector) {
         '横版大图': '横版大图 16:9',
         '闪屏视频': '闪屏视频 9:16'
     };
-    // 处理每一行数据
-    for (let index = 0; index < df.length; index++) {
-        const row = df[index];
-        // 断点续跑：已完成（BB 列有标记）的行直接跳过
-        if (doneRows.has(index)) {
-            continue;
+    // 单行搭建（抽出为函数，便于行级「刷新+重试」；行体原样、仅多一层函数包裹）
+    async function processRow(index, attempt) {
+        if (attempt > 0) {
+            // 填坑：把本行从磁盘刷新进内存，让 BA 守卫读到上次写入，避免重复建广告组
+            df[index] = (0, utils_1.readExcelFile)()[index];
+            page = await (0, utils_1.robustRefresh)(page, context, 'https://ad.qq.com');
+            await (0, utils_1.sleep)(2500);
         }
+        const row = df[index];
         // ─── 腾讯(adq) 列约定（列号均为 0-based）与断点续跑 ───
         // 数据：0策略ID 2活动名 13媒体 15点位 18脱敏人群 20创意名 23区域
         //       29deeplink 31小程序链接 32落地页类型 40广告账户
@@ -224,8 +226,17 @@ async function runAdq(df, idSelector) {
         ]);
         console.log(`第${index + 1}条广告 : ${unitNm} 创建成功\n`);
     }
+    // 行级「刷新+重试」容错：首跑失败则刷新页面重试 2 次；仍失败则抛错中止整批（绝不跳行）
+    for (let index = 0; index < df.length; index++) {
+        // 断点续跑：已完成（BB 列有标记）的行直接跳过
+        if (doneRows.has(index)) {
+            continue;
+        }
+        await (0, utils_1.withRowRetry)(index, 2, (attempt) => processRow(index, attempt));
+    }
     // 全部完成则删列收尾；否则保留以便续跑
-    (0, utils_1.trimColumnsIfAllDone)(df, doneRows);
+    // ⛔ 删列收尾功能已临时关停：任务结束后不再删除 AS 及之后的列，原文件保留全部列。恢复时取消下行注释即可。
+    // (0, utils_1.trimColumnsIfAllDone)(df, doneRows);
     (0, utils_1.waitForEnter)('广告创建完成，plz press enter and continue');
     } finally {
         // 即使中途抛错也确保关闭浏览器，避免残留 Chrome 进程
@@ -577,7 +588,8 @@ async function runAdqReplace(df) {
         console.log(`第${index + 1}条创意 : 修改成功\n`);
     }
     // 全部完成则删列收尾；否则保留以便续跑
-    (0, utils_1.trimColumnsIfAllDone)(df, doneRows);
+    // ⛔ 删列收尾功能已临时关停：任务结束后不再删除 AS 及之后的列，原文件保留全部列。恢复时取消下行注释即可。
+    // (0, utils_1.trimColumnsIfAllDone)(df, doneRows);
     (0, utils_1.waitForEnter)('所有创意修改成功，press Enter and quit');
     } finally {
         // 即使中途抛错也确保关闭浏览器，避免残留 Chrome 进程

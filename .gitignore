@@ -4,4 +4,4 @@ auth_state_*.json
 *.html
 *.zip
 *.xlsx
-.claude/
+.claude

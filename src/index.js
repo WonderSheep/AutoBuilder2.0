@@ -15,6 +15,10 @@ async function main() {
     try {
         // 启动前检测：Excel 必须关闭，否则回写断点状态会静默失败、重启可能产生重复
         (0, utils_1.assertExcelWritable)();
+        // 防休眠：覆盖登录等待 + 整个搭建（公司机系统设置锁不住，走 Win32 API；最长 2 小时，退出时自动解除）
+        // 先注册退出钩子，再起防休眠进程，确保 PS 起来后任何退出路径都能清理掉它
+        process.on('exit', () => (0, utils_1.stopKeepAwake)());
+        (0, utils_1.keepAwake)();
         // 读取Excel文件
         const df = (0, utils_1.readExcelFile)();
         // 获取数据信息

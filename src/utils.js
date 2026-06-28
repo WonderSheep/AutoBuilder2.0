@@ -6,6 +6,10 @@ exports.getBrowserPath = getBrowserPath;
 exports.launchBrowser = launchBrowser;
 exports.saveAuthState = saveAuthState;
 exports.sleep = sleep;
+exports.robustRefresh = robustRefresh;
+exports.withRowRetry = withRowRetry;
+exports.keepAwake = keepAwake;
+exports.stopKeepAwake = stopKeepAwake;
 exports.readExcelFile = readExcelFile;
 exports.readTxtFile = readTxtFile;
 exports.getUrlParam = getUrlParam;
@@ -19,6 +23,7 @@ const os = require("os");
 const XLSX = require("xlsx");
 const iconv = require("iconv-lite");
 const playwright_1 = require("playwright");
+const child_process = require("child_process");
 /**
  * 获取当前脚本的执行目录（使用相对路径）
  */
@@ -140,6 +145,91 @@ async function saveAuthState(context, filename = 'auth_state.json') {
  */
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+/**
+ * 鲁棒的页面刷新：先 goto 到一个干净 URL 逃出卡死/脏状态；若 goto 抛错（页面彻底卡死），
+ * 则关闭旧 tab、在同一 context 下新开一个 tab（共享登录态，无需重登）；若仍失败则原样返回旧 page。
+ * 永不抛错，始终返回一个可用 page。用于行级重试前重置页面（实测刷新后重试可解决约 80% 瞬时错误）。
+ */
+async function robustRefresh(page, context, url) {
+    try {
+        await page.goto(url, { timeout: 20000, waitUntil: 'domcontentloaded' });
+        return page;
+    }
+    catch {
+        // 旧 tab 已卡死，关掉它（关不掉也无所谓）
+        try {
+            await page.close();
+        }
+        catch { /* 忽略 */ }
+        try {
+            return await context.newPage();
+        }
+        catch {
+            return page; // 实在没办法，原样返回
+        }
+    }
+}
+/**
+ * 行级「刷新 + 重试」容错：把单行搭建包进来，首跑失败则刷新页面重试，最多 retries 次重试（共 retries+1 次尝试）。
+ * run(attempt) 为本行搭建逻辑；attempt=0 是首跑（无额外开销），attempt>0 时由调用方在 run 内自行做
+ * 内存刷新（df[index]=readExcelFile()[index]）+ robustRefresh + sleep，确保 BA/BB 守卫能读到上次写入、不重复创建。
+ * 全部尝试均失败 → 抛聚合错误（交由外层 main 兜底中止整批）；绝不跳行。
+ */
+async function withRowRetry(index, retries, run) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+            await run(attempt);
+            return; // 本行成功
+        }
+        catch (e) {
+            const msg = (e && e.message) ? e.message : String(e);
+            if (attempt < retries) {
+                console.warn(`⚠️  第${index + 1}行 第${attempt + 1}次执行失败：${msg}；刷新页面重试...\n`);
+            }
+            else {
+                throw new Error(`第${index + 1}行 连续 ${retries + 1} 次执行均失败（已刷新重试 ${retries} 次），需人工介入。最后错误：${msg}\n`);
+            }
+        }
+    }
+}
+let keepAwakeProc = null;
+/**
+ * 防休眠：起一个后台 PowerShell 调用 Win32 SetThreadExecutionState，让 Windows 在搭建期间
+ * （含登录等待）不进入休眠/熄屏。公司机系统休眠设置锁不住、也不需要管理员权限；不改任何系统设置，
+ * 只在该进程存活期间生效，stopKeepAwake 或进程退出即解除。
+ * 0x80000003 = ES_CONTINUOUS(0x80000000) | ES_SYSTEM_REQUIRED(0x1) | ES_DISPLAY_REQUIRED(0x2)，
+ * 含 DISPLAY 是因为非 headless 浏览器需要显示会话，熄屏会致 Playwright 超时崩溃。
+ * for 循环最多撑 2 小时（120×60s）自退，防 Node 被强杀后该进程变孤儿、长期防休眠。
+ */
+function keepAwake() {
+    if (keepAwakeProc) {
+        return;
+    }
+    // 注意：PS 把 0x80000003 当 Int32 解析会溢出成负数、转 uint32 失败，故用十进制 2147483651（=0x80000003）。
+    const ps = `$s='[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);';$t=Add-Type -MemberDefinition $s -Name P -Namespace W -PassThru;[void]$t::SetThreadExecutionState([uint32]2147483651);for($i=0;$i -lt 120;$i++){Start-Sleep -Seconds 60}`;
+    try {
+        keepAwakeProc = child_process.spawn('powershell.exe', ['-NoProfile', '-Command', ps], { windowsHide: true, stdio: 'ignore' });
+        keepAwakeProc.unref();
+        console.log(`☕  已开启防休眠（最长 2 小时，搭建结束自动解除）\n`);
+    }
+    catch (e) {
+        const msg = (e && e.message) ? e.message : String(e);
+        console.warn(`⚠️  开启防休眠失败（不影响搭建，仅可能因休眠中断）：${msg}\n`);
+    }
+}
+/**
+ * 解除防休眠：杀掉 keepAwake 起的 PowerShell。进程被杀后其线程结束，Windows 自动恢复默认休眠行为。
+ */
+function stopKeepAwake() {
+    if (!keepAwakeProc) {
+        return;
+    }
+    try {
+        keepAwakeProc.kill();
+    }
+    catch { /* 忽略 */ }
+    keepAwakeProc = null;
 }
 /**
  * 读取Excel文件

@@ -12,6 +12,8 @@ AutoBuilder 2.0 —— 一个基于 Playwright 的浏览器自动化工具，用
 
 在本仓库里运行：`node src/index.js`（或在 Windows 上双击 `.bat`）。程序会以交互方式提示，并在登录环节等待回车。**运行前请关闭 Excel**——[main()](src/index.js) 启动时调用 [assertExcelWritable](src/utils.js) 检测输入 xlsx 是否被占用，被占用会直接报错中止（避免回写断点状态静默失败）。
 
+**运行期间自动防休眠**：[main()](src/index.js) 启动时调用 [keepAwake](src/utils.js)，起一个后台 PowerShell 调用 Win32 `SetThreadExecutionState`，让 Windows 在搭建期间（含登录等待）**不进入休眠/熄屏**——因为非 headless 浏览器一旦休眠/熄屏会连接超时崩溃。公司机系统休眠设置锁不住、也无需管理员权限、不改任何系统设置，只在该子进程存活期间生效；程序退出（`stopKeepAwake`，挂在 `process.on('exit')`，先注册再起子进程确保任何退出路径都清理）即解除，最长兜底 2 小时自退（防 Node 被强杀后子进程变孤儿）。**陷阱**：PowerShell 把 `0x80000003` 当 Int32 解析会溢出成负数、转 `uint32` 失败导致 `SetThreadExecutionState` 静默不生效，故该值在 [utils.js](src/utils.js) 里写成十进制 `2147483651`（=0x80000003 = ES_CONTINUOUS|ES_SYSTEM_REQUIRED|ES_DISPLAY_REQUIRED）。
+
 **不要依赖 [src/package.json](src/package.json) 里的 npm 脚本。** `build`/`start`/`dev` 引用的 TypeScript 源码和 `dist/` 目录**并不存在**。`src/` 下的 `.js` 文件是 tsc 编译产物，但现在被直接手工修改 —— 仓库里没有 `.ts` 源码。请把这些 `.js` 文件当作真正的源码，直接在原地编辑；不要尝试用 `tsc` 重新生成。
 
 ## 调度逻辑（全局视角）
@@ -33,7 +35,7 @@ AutoBuilder 2.0 —— 一个基于 Playwright 的浏览器自动化工具，用
 - 项目根目录是 `d:\AB_Node`，但所有代码都在下一层的 `src/` 中。[src/utils.js](src/utils.js) 把项目根目录算作 `__dirname/..`（即 `src/` 的父目录）。
 - **输入和输出是同一个文件**，位于项目根目录（不是 `src/` 下）。[readExcelFile](src/utils.js) 自动识别根目录里的那个 `.xlsx`（跳过 `~$`/`$` 临时锁文件），读取时统一 trim 所有字符串单元格的头尾空白（避免脏数据干扰中文文本匹配）；[readTxtFile](src/utils.js) 对 `.txt`（CPC 避投人群包文件）做同样的事，优先 utf-8，失败则用 `iconv-lite` 按 gbk 解码。
 - **Excel 数据按列索引按位置读取，而不是按表头名称**（`Object.values(row)[N]`）。各列索引含义因平台而异，以内联注释的形式定义在每个 runner 中（例如腾讯：`values[13]` = 媒体、`values[31]` = 小程序链接、`values[45]` = 素材名；B站：`values[35]` = 广告账户；抖音：`values[0]` = 策略ID）。当模板列发生变化时，必须更新这些**索引**，而不是任何表头查找逻辑。
-- **回写也是就地写回同一个原文件**（不再生成 `media_id_...` 新文件）：每完成一个阶段，runner 把从 URL 解析出的 ID 连同"完成标记"通过 [writeBackInPlace](src/utils.js) 就地增量写回原 xlsx（基于原工作簿改，保留格式；回写失败只告警不中断）。回写列与标记因平台而异——腾讯选点位后写 adgroupId→col42 并置 BA(52)、提交创意后写 dynamicCreativeId→col43 并置 BB(53)；抖音建项目后写 project_id→col41（覆盖已用完的复制源项目 copyAd）并置 BA(52)、建单元后清空 col42（复制源单元 copyUn）并置 BB(53)；B站写 campaign_id→AR(43) 并置 BB(53)。**BB 列（0-based 53 / 第 54 列）='1' 表示整行完成**（三平台共用）；腾讯/抖音另有 **BA 列（0-based 52 / 第 53 列）='1' 表示阶段完成**（腾讯=广告组已建 / 抖音=项目已建），让崩在中间的行能从阶段后续跑、而非整行重来。全部完成后腾讯/抖音删 AS(0-based 44)及之后的列（含 BA、BB、素材列），原文件即最终产物；B站不删列。详见下方"断点续跑"一节。
+- **回写也是就地写回同一个原文件**（不再生成 `media_id_...` 新文件）：每完成一个阶段，runner 把从 URL 解析出的 ID 连同"完成标记"通过 [writeBackInPlace](src/utils.js) 就地增量写回原 xlsx（基于原工作簿改，保留格式；回写失败只告警不中断）。回写列与标记因平台而异——腾讯选点位后写 adgroupId→col42 并置 BA(52)、提交创意后写 dynamicCreativeId→col43 并置 BB(53)；抖音建项目后写 project_id→col41（覆盖已用完的复制源项目 copyAd）并置 BA(52)、建单元后清空 col42（复制源单元 copyUn）并置 BB(53)；B站写 campaign_id→AR(43) 并置 BB(53)。**BB 列（0-based 53 / 第 54 列）='1' 表示整行完成**（三平台共用）；腾讯/抖音另有 **BA 列（0-based 52 / 第 53 列）='1' 表示阶段完成**（腾讯=广告组已建 / 抖音=项目已建），让崩在中间的行能从阶段后续跑、而非整行重来。全部完成后腾讯/抖音删 AS(0-based 44)及之后的列（含 BA、BB、素材列），原文件即最终产物；B站不删列。（**⛔ 该删列收尾当前已临时关停**，三个调用点已注释，详见下方"断点续跑"一节。）
 
 ## 各平台 runner 的模式
 
@@ -45,20 +47,22 @@ AutoBuilder 2.0 —— 一个基于 Playwright 的浏览器自动化工具，用
 
 ## 断点续跑（腾讯/抖音：BA+BB 两级标记；B站：BB 单标记）
 
-防止"平台报错中断 → 重跑重复搭建"。腾讯、抖音把"行完成"拆成**两级**标记，崩在中间能从更精确的阶段续跑而非整行重来；B站只有行级标记。核心工具都在 [utils.js](src/utils.js)：`readDoneRows`（启动恢复已完成行）、`markRowAndPersist`（增量回写，回写失败只告警不中断）、`trimColumnsIfAllDone`（全部完成则删列）。`writeBackInPlace` 用 `value=null` 清空单元格（抖音清复制源用）。
+防止"平台报错中断 → 重跑重复搭建"。腾讯、抖音把"行完成"拆成**两级**标记，崩在中间能从更精确的阶段续跑而非整行重来；B站只有行级标记。核心工具都在 [utils.js](src/utils.js)：`readDoneRows`（启动恢复已完成行）、`markRowAndPersist`（增量回写，回写失败只告警不中断）、`trimColumnsIfAllDone`（全部完成则删列；**⛔ 其三处调用当前已注释关停**：runDy / runAdq / runAdqReplace 末尾）。`writeBackInPlace` 用 `value=null` 清空单元格（抖音清复制源用）。
 
 - **BB 列（0-based 53 / 第 54 列）= `'1'`** → **整行完成**，三平台共用，`readDoneRows` 据此在循环里跳过整行。
 - **BA 列（0-based 52 / 第 53 列）= `'1'`** → **阶段完成**，仅腾讯/抖音有：腾讯=广告组已建、抖音=项目已建。崩在这一步之后、整行完成之前，重跑检测到 BA='1' 就跳过该阶段创建、直达下一步，避免重复建广告组/项目。（程序在写 BA 前会先确认真抠到了 ID，否则抛错不置 BA，让该行下次整体重试，避免置了 BA 却没 ID 把行卡死。）
 - **手动控制**（关键能力）：在 Excel 里直接改 **BB 列** —— 删掉某行的 `1` → 整行重跑；手动填上 `1` → 强制跳过（如明知有问题的行）。BA 由程序自动写，正常无需手改。
+- **行级「刷新 + 重试」容错**（仅 runDy + runAdq 有；runAdqReplace / runBili 无）：单行搭建首跑失败时，自动刷新页面重试，最多重试 2 次（共 3 次尝试）。实测刷新后重试可解决约 80% 的瞬时错误（选择器偶发抽风、页面没加载完），从而**不再动辄整批中断、手动重点 .bat**。它复用的就是上面这套 BA/BB 续跑逻辑——"重试本行"= 重新进入行体、让 BA 守卫自己跳过已建阶段，**不另造幂等性**。**绝不跳行**：3 次全失败就抛聚合错误、中止整批（沿用 main 兜底 + runner finally 关浏览器），人工处理后重点 .bat 续跑。核心工具在 [utils.js](src/utils.js)：`withRowRetry(index, retries, run)`（重试循环 + 计数 + 到顶抛聚合错误）、`robustRefresh(page, context, url)`（goto 干净 URL 逃出卡死状态，失败则同 context 新开 tab，**永不抛错**）。runDy 把行体直接包进 `withRowRetry` 回调；runAdq 把行体抽成嵌套函数 `processRow(index, attempt)` 再由 `withRowRetry` 调用（行体内容一字未改）。
+  > **关键坑（已填）**：`markRowAndPersist` 只写磁盘、**不更新内存 `df`**，而行体读 BA 读的是内存快照（启动时一次性读入）。所以**重试前必须 `df[index] = readExcelFile()[index]`** 把本行从磁盘刷回内存，否则守卫读不到上次写的 BA → 重复建项目/广告组。重启续跑不踩这坑是因为重启会重新 `readExcelFile`；同进程重试少了这步刷新就会重复创建。
 
 各平台写入与续跑细节：
 
 - **腾讯（runAdq）**：复制源广告读自 col42(`copyAd`)。选点位成功（=广告组已建）即把 URL 的 `adgroup_id` 写回 col42（覆盖 copyAd）并置 BA(52)；提交创意后写 `dynamic_creative_id`→col43 并置 BB(53)。续跑时 BA='1' 而 BB≠'1' 则直达 `creatives-add?adgroup_id=` 重选点位、继续创意，跳过广告组创建。`runAdqReplace`（替换创意）只回写 BB，无阶段标记。
 - **抖音（runDy）**：复制源项目读自 col41(`copyAd`)、复制源单元读自 col42(`copyUn`)。建完项目即把 `project_id` 写回 col41（覆盖 copyAd）并置 BA(52)；建完单元清空 col42(`copyUn`) 并置 BB(53)。续跑时 BA='1' 而 BB≠'1' 则复用 col41 的 project_id 直接建单元，跳过建项目。崩在"建单元途中"仍可能重复单元（未回写单元 ID，无法检测），窗口很小、可清理。
 - **B站（runBili）**：只有 BB(53) 行级标记；另把已建计划的 `campaign_id` 写到 **AR(43)**（计划级），供同 `campaignNm_audience` 的其他行复用、重建 `planDict`。B站**不删列收尾**（保留 AS 及之后所有列）。
-- **删列收尾**（仅 runAdq / runAdqReplace / runDy）：循环正常跑完（BB 全满）就删 AS(0-based 44)及之后的列（含 BA、BB、素材列），保留 col≤43（含交付要用的 adgroupId/dynamicCreativeId/project_id），原文件即最终产物；没跑完则保留全部列以便续跑。
+- **删列收尾**（仅 runAdq / runAdqReplace / runDy）：循环正常跑完（BB 全满）就删 AS(0-based 44)及之后的列（含 BA、BB、素材列），保留 col≤43（含交付要用的 adgroupId/dynamicCreativeId/project_id），原文件即最终产物；没跑完则保留全部列以便续跑。**⛔ 当前已临时关停**——三处调用点（[run_dy.js:115](src/run_dy.js#L115)、[run_adq.js:228](src/run_adq.js#L228)、[run_adq.js:580](src/run_adq.js#L580)）均已注释掉，utils.js 里的 `trimColumnsIfAllDone` 函数本体保留未动。关停后任务跑完不再删列，BA/BB 标记会留在文件里，**重跑同一个文件前需手动清掉对应行的 BB 列**（见上方"手动控制"）。恢复方法：把那三行注释取消即可。
 
-注意：删列是**不可逆**终态（素材列没了，这个文件不能再跑，搭建前请备份）。**运行前 Excel 必须关闭**——[main()](src/index.js) 启动时调用 [assertExcelWritable](src/utils.js) 用 `r+` 探测占用，文件在 Excel 中打开（EBUSY/EPERM/EACCES）会直接报错中止，避免后续回写静默失败。腾讯 CPC 避投组合按行序 `index+1` 取，跳过已完成行不会让组合错位。
+注意：删列是**不可逆**终态（素材列没了，这个文件不能再跑，搭建前请备份）——该行为**当前已关停，等重新启用后才需留意**。**运行前 Excel 必须关闭**——[main()](src/index.js) 启动时调用 [assertExcelWritable](src/utils.js) 用 `r+` 探测占用，文件在 Excel 中打开（EBUSY/EPERM/EACCES）会直接报错中止，避免后续回写静默失败。腾讯 CPC 避投组合按行序 `index+1` 取，跳过已完成行不会让组合错位。
 
 ## 选择器很脆弱 —— 需要持续维护
 
