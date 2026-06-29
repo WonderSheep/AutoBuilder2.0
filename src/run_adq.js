@@ -133,10 +133,16 @@ async function runAdq(df, idSelector) {
         // 选点位
         await page.locator('button#creative-type-btn').click();
         const positionText = pagePositionMap[pagePst] || String(pagePst);
-        if (await page.locator('span.odc-text.ellipsis').filter({ hasText: positionText }).count() === 0) {
-            await page.locator('span.spaui-switch-helper').click();
+        // 点位选择：先尝试直接点目标点位（正则 + first，1s 超时）；1s 内点不到说明在另一分组，切开关再点
+        const positionRegex = new RegExp(positionText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        const positionOpt = page.locator('span.odc-text.ellipsis').filter({ hasText: positionRegex }).first();
+        try {
+            await positionOpt.click({ timeout: 1000 });
         }
-        await page.locator('span.odc-text.ellipsis').filter({ hasText: positionText }).click();
+        catch {
+            await page.locator('span.spaui-switch-helper').click();
+            await positionOpt.click();
+        }
         await page.getByRole('button', { name: '确定' }).click();
         // 点位选成功即代表广告层级已建：首次抓 adgroup_id 回写（覆盖 copyAd + BA 置 '1'），防崩在建创意途中重复建广告组
         if (!adgroupBuilt) {
