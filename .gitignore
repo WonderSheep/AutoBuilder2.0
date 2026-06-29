@@ -5,3 +5,4 @@ auth_state_*.json
 *.zip
 *.xlsx
 .claude
+刷新重试机制解析.md
