@@ -13,7 +13,7 @@ async function runBili(df) {
     try {
     // 创建两个页面
     const page1 = await context.newPage();
-    const page = await context.newPage();
+    let page = await context.newPage();
     // 登录
     await page.goto('https://e.bilibili.com/site/account/select');
     (0, utils_1.waitForEnter)('确保当前已处于登录状态后，按下回车开始搭建！若未登录，Misa手机号：13761307177\n');
@@ -41,12 +41,15 @@ async function runBili(df) {
         '播放页_图片': '播放页',
         '播放暂停页': '播放暂停页'
     };
-    for (let index = 0; index < df.length; index++) {
-        const row = df[index];
-        // 断点续跑：已完成（BB 列有标记）的行直接跳过
-        if (doneRows.has(index)) {
-            continue;
+    // 单行搭建（抽出为函数，便于行级「刷新+重试」；行体原样、仅多一层函数包裹）
+    async function processRow(index, attempt) {
+        if (attempt > 0) {
+            // 只刷新主流程 page（page1 小程序页按约定不刷）；df 刷新带上无害
+            df[index] = (0, utils_1.readExcelFile)()[index];
+            page = await (0, utils_1.robustRefresh)(page, context, 'https://e.bilibili.com/site/account/select');
+            await (0, utils_1.sleep)(2500);
         }
+        const row = df[index];
         const values = Object.values(row);
         const strategyId = values[3]; // 策略ID
         const campaignNm = values[9]; // 活动名称
@@ -232,6 +235,14 @@ async function runBili(df) {
             { col: utils_1.TAG_COL, value: utils_1.TAG_VALUE },
         ]);
         console.log(`第${index + 1}条广告 : ${unitNm} 创建成功\n`);
+    }
+    // 行级「刷新+重试」容错：首跑失败则刷新页面重试 2 次；仍失败则抛错中止整批（绝不跳行）
+    for (let index = 0; index < df.length; index++) {
+        // 断点续跑：已完成（BB 列有标记）的行直接跳过
+        if (doneRows.has(index)) {
+            continue;
+        }
+        await (0, utils_1.withRowRetry)(index, 2, (attempt) => processRow(index, attempt));
     }
     // B站：不删列收尾（保留 AS 及之后所有列，含 BB 标记）
     (0, utils_1.waitForEnter)('广告创建完成，plz press enter and continue');
