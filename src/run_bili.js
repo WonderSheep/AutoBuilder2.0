@@ -216,7 +216,7 @@ async function runBili(df) {
         await (0, utils_1.sleep)(500);
         await page.getByRole('button', { name: '保存' }).click();
         // 存入计划ID
-        await page.getByRole('button', { name: '新建创意' }).waitFor({ state: 'visible', timeout: 300000 });
+        await page.getByRole('button', { name: '新建创意' }).waitFor({ state: 'visible', timeout: 20000 });
         if (!(planNm in planDict)) {
             const campaignId = extractCampaignId(page.url());
             if (campaignId !== null) {

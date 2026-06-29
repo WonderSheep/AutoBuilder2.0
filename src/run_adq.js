@@ -207,7 +207,7 @@ async function runAdq(df, idSelector) {
         }
         // 创意名称
         await page.getByText('创意设置').click();
-        const targetInput = await page.waitForSelector('input.meta-input.spaui-input.has-normal', { timeout: 300000 });
+        const targetInput = await page.waitForSelector('input.meta-input.spaui-input.has-normal', { timeout: 10000 });
         await targetInput.click();
         await targetInput.press('ControlOrMeta+a');
         await targetInput.fill(unitNm);
@@ -215,7 +215,7 @@ async function runAdq(df, idSelector) {
         await page.getByRole('button', { name: '提交创意' }).click();
         await page.getByRole('button', { name: '返回创意管理' }).click();
         // 去编辑
-        await page.getByRole('button', { name: '编辑' }).first().waitFor({ state: 'visible', timeout: 300000 });
+        await page.getByRole('button', { name: '编辑' }).first().waitFor({ state: 'visible', timeout: 20000 });
         const jumpUrl = await page.getByRole('button', { name: '编辑' }).first().getAttribute('href') || '';
         const dynamicCreativeId = (0, utils_1.getUrlParam)(jumpUrl, 'dynamic_creative_id');
         // 回写 dynamicCreativeId + BB 完成标记（adgroupId 已在选点位后写入 col42）
@@ -581,7 +581,7 @@ async function runAdqReplace(df) {
         // 提交
         await page.getByRole('button', { name: '提交创意' }).click();
         await page.getByRole('button', { name: '返回创意管理' }).click();
-        await page.getByRole('button', { name: '编辑' }).first().waitFor({ state: 'visible', timeout: 300000 });
+        await page.getByRole('button', { name: '编辑' }).first().waitFor({ state: 'visible', timeout: 20000 });
         // 回写 BB 完成标记（断点续跑）
         doneRows.add(index);
         (0, utils_1.markRowAndPersist)(df, index, [{ col: utils_1.TAG_COL, value: utils_1.TAG_VALUE }]);

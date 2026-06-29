@@ -91,7 +91,7 @@ async function runDy(df) {
                 // 保存
                 await page.getByRole('button', { name: '保存并关闭' }).click();
                 // project_id
-                await page.getByRole('button', { name: '项目工具' }).waitFor({ state: 'visible', timeout: 300000 });
+                await page.getByRole('button', { name: '项目工具' }).waitFor({ state: 'visible', timeout: 20000 });
                 projectId = (0, utils_1.getUrlParam)(page.url(), 'project_id');
                 // 未抠到 project_id 说明项目未真正创建成功：抛错（不置 BA）让本行下次重试，避免置 BA 后该行卡死
                 if (!projectId) {
@@ -106,11 +106,11 @@ async function runDy(df) {
             // 单元
             await page.goto(`https://ad.oceanengine.com/superior/ads?aadvid=${accountId}&is_copy=1&project_id=${projectId}&campaign_type=1&ad_count=1&promotion_id=${copyUn}&copy_type=3`);
             // 单元名称
-            await page.locator('textarea.ovui-textarea').waitFor({ state: 'visible', timeout: 300000 });
+            await page.locator('textarea.ovui-textarea').waitFor({ state: 'visible', timeout: 10000 });
             await page.locator('textarea.ovui-textarea').fill(unitNm);
             // 保存
             await page.getByRole('button', { name: '保存并关闭' }).click();
-            await page.getByRole('button', { name: '项目工具' }).waitFor({ state: 'visible', timeout: 300000 });
+            await page.getByRole('button', { name: '项目工具' }).waitFor({ state: 'visible', timeout: 20000 });
             // 清空复制单元源 copyUn（AQ列/keys[42]）+ 回写 BB 完成标记（断点续跑）
             doneRows.add(index);
             (0, utils_1.markRowAndPersist)(df, index, [
