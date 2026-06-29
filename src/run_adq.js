@@ -44,8 +44,7 @@ async function runAdq(df, idSelector) {
     // 单行搭建（抽出为函数，便于行级「刷新+重试」；行体原样、仅多一层函数包裹）
     async function processRow(index, attempt) {
         if (attempt > 0) {
-            // 填坑：把本行从磁盘刷新进内存，让 BA 守卫读到上次写入，避免重复建广告组
-            df[index] = (0, utils_1.readExcelFile)()[index];
+            // 内存 df 已由 markRowAndPersist 在回写时同步（utils.applyRowToMemory），BA 守卫能读到上次写入，无需再全量读盘
             page = await (0, utils_1.robustRefresh)(page, context, 'https://ad.qq.com');
             await (0, utils_1.sleep)(2500);
         }

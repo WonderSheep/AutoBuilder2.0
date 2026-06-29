@@ -24,8 +24,7 @@ async function runDy(df) {
         // 行级「刷新+重试」容错：首跑失败则刷新页面重试 2 次；仍失败则抛错中止整批（绝不跳行）
         await (0, utils_1.withRowRetry)(index, 2, async (attempt) => {
             if (attempt > 0) {
-                // 填坑：把本行从磁盘刷新进内存，让 BA 守卫读到上次写入，避免重复建项目
-                df[index] = (0, utils_1.readExcelFile)()[index];
+                // 内存 df 已由 markRowAndPersist 在回写时同步（utils.applyRowToMemory），BA 守卫能读到上次写入，无需再全量读盘
                 page = await (0, utils_1.robustRefresh)(page, context, 'https://business.oceanengine.com/site/account-manage/ad/bidding/superior/account');
                 await (0, utils_1.sleep)(2500);
             }

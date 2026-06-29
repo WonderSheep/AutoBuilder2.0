@@ -47,13 +47,13 @@ AutoBuilder 2.0 —— 一个基于 Playwright 的浏览器自动化工具，用
 
 ## 断点续跑（腾讯/抖音：BA+BB 两级标记；B站：BB 单标记）
 
-防止"平台报错中断 → 重跑重复搭建"。腾讯、抖音把"行完成"拆成**两级**标记，崩在中间能从更精确的阶段续跑而非整行重来；B站只有行级标记。核心工具都在 [utils.js](src/utils.js)：`readDoneRows`（启动恢复已完成行）、`markRowAndPersist`（增量回写，回写失败只告警不中断）、`trimColumnsIfAllDone`（全部完成则删列；**⛔ 其三处调用当前已注释关停**：runDy / runAdq / runAdqReplace 末尾）。`writeBackInPlace` 用 `value=null` 清空单元格（抖音清复制源用）。
+防止"平台报错中断 → 重跑重复搭建"。腾讯、抖音把"行完成"拆成**两级**标记，崩在中间能从更精确的阶段续跑而非整行重来；B站只有行级标记。核心工具都在 [utils.js](src/utils.js)：`readDoneRows`（启动恢复已完成行）、`markRowAndPersist`（增量回写；回写失败抛致命错误立即中止整批，见下方「断点续跑」节）、`trimColumnsIfAllDone`（全部完成则删列；**⛔ 其三处调用当前已注释关停**：runDy / runAdq / runAdqReplace 末尾）。`writeBackInPlace` 用 `value=null` 清空单元格（抖音清复制源用）。
 
 - **BB 列（0-based 53 / 第 54 列）= `'1'`** → **整行完成**，三平台共用，`readDoneRows` 据此在循环里跳过整行。
 - **BA 列（0-based 52 / 第 53 列）= `'1'`** → **阶段完成**，仅腾讯/抖音有：腾讯=广告组已建、抖音=项目已建。崩在这一步之后、整行完成之前，重跑检测到 BA='1' 就跳过该阶段创建、直达下一步，避免重复建广告组/项目。（程序在写 BA 前会先确认真抠到了 ID，否则抛错不置 BA，让该行下次整体重试，避免置了 BA 却没 ID 把行卡死。）
 - **手动控制**（关键能力）：在 Excel 里直接改 **BB 列** —— 删掉某行的 `1` → 整行重跑；手动填上 `1` → 强制跳过（如明知有问题的行）。BA 由程序自动写，正常无需手改。
 - **行级「刷新 + 重试」容错**（runDy + runAdq + runBili 有；runAdqReplace 无）：单行搭建首跑失败时，自动刷新页面重试，最多重试 2 次（共 3 次尝试）。实测刷新后重试可解决约 80% 的瞬时错误（选择器偶发抽风、页面没加载完），从而**不再动辄整批中断、手动重点 .bat**。它复用的就是上面这套 BA/BB 续跑逻辑——"重试本行"= 重新进入行体、让守卫自己跳过已建阶段（腾讯/抖音靠 BA 列，B站靠 planDict 复用已建计划），**不另造幂等性**。**绝不跳行**：3 次全失败就抛聚合错误、中止整批（沿用 main 兜底 + runner finally 关浏览器），人工处理后重点 .bat 续跑。核心工具在 [utils.js](src/utils.js)：`withRowRetry(index, retries, run)`（重试循环 + 计数 + 到顶抛聚合错误）、`robustRefresh(page, context, url)`（goto 干净 URL 逃出卡死状态，失败则同 context 新开 tab，**永不抛错**）。runDy 把行体直接包进 `withRowRetry` 回调；runAdq / runBili 把行体抽成嵌套函数 `processRow(index, attempt)` 再由 `withRowRetry` 调用（行体内容一字未改）。**B站特殊**：用两个 page（page1 小程序页 + page 主流程），重试只刷新 `page`（page1 不刷）；计划+单元+创意是一次保存原子完成（无"建一半"中间态），无 BA 阶段标记；小程序添加在重试内，重试可能留重复小程序条目（可接受）。
-  > **关键坑（已填）**：`markRowAndPersist` 只写磁盘、**不更新内存 `df`**，而行体读 BA 读的是内存快照（启动时一次性读入）。所以**重试前必须 `df[index] = readExcelFile()[index]`** 把本行从磁盘刷回内存，否则守卫读不到上次写的 BA → 重复建项目/广告组。重启续跑不踩这坑是因为重启会重新 `readExcelFile`；同进程重试少了这步刷新就会重复创建。
+  > **内存与磁盘一致性（#2 优化后）**：`markRowAndPersist` 现在「先写磁盘成功、再同步更新内存 `df`」（新增 `applyRowToMemory`，经 `Object.keys` 按列号定位键名；**该行列不足时回退整行 `readExcelFile` 刷新，绝不写错列**）。故同进程行级重试时 BA/BB 守卫能直接读到内存最新值，**重试前不再需要** `df[index] = readExcelFile()[index]`（runDy / runAdq / runBili 三处已移除）。崩溃重启仍靠启动时 `readExcelFile` 全量重建内存（不变）；写入顺序「先磁盘后内存」保证内存永不超前磁盘。（配 #1：`writeBackInPlace` 现缓存整个 workbook 复用，免去每次回写都 readFile 整本表——运行期 Excel 关闭、只有本进程写，内存累积态 ≡ 磁盘态。）
 
 各平台写入与续跑细节：
 

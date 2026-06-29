@@ -44,8 +44,7 @@ async function runBili(df) {
     // 单行搭建（抽出为函数，便于行级「刷新+重试」；行体原样、仅多一层函数包裹）
     async function processRow(index, attempt) {
         if (attempt > 0) {
-            // 只刷新主流程 page（page1 小程序页按约定不刷）；df 刷新带上无害
-            df[index] = (0, utils_1.readExcelFile)()[index];
+            // 只刷新主流程 page（page1 小程序页按约定不刷）；内存 df 已由 markRowAndPersist 回写时同步，无需再读盘
             page = await (0, utils_1.robustRefresh)(page, context, 'https://e.bilibili.com/site/account/select');
             await (0, utils_1.sleep)(2500);
         }

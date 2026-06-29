@@ -173,8 +173,9 @@ async function robustRefresh(page, context, url) {
 /**
  * 行级「刷新 + 重试」容错：把单行搭建包进来，首跑失败则刷新页面重试，最多 retries 次重试（共 retries+1 次尝试）。
  * run(attempt) 为本行搭建逻辑；attempt=0 是首跑（无额外开销），attempt>0 时由调用方在 run 内自行做
- * 内存刷新（df[index]=readExcelFile()[index]）+ robustRefresh + sleep，确保 BA/BB 守卫能读到上次写入、不重复创建。
- * 全部尝试均失败 → 抛聚合错误（交由外层 main 兜底中止整批）；绝不跳行。
+ * robustRefresh + sleep（内存 df 已由 markRowAndPersist 在回写时经 applyRowToMemory 同步，BA/BB 守卫能直接读到上次写入，无需再 readExcelFile 重读）。
+ * 致命错误（run 内抛 e.fatal=true，如回写失败）不重试，立即向上抛中止整批——重试无益且重跑会重复创建广告/创意。
+ * 非致命错误全部尝试均失败 → 抛聚合错误（交由外层 main 兜底中止整批）；绝不跳行。
  */
 async function withRowRetry(index, retries, run) {
     for (let attempt = 0; attempt <= retries; attempt++) {
@@ -183,6 +184,10 @@ async function withRowRetry(index, retries, run) {
             return; // 本行成功
         }
         catch (e) {
+            // 致命错误（如回写失败）不重试：重试也会失败，且重跑行体会重复创建广告/创意，立即中止交人工处理
+            if (e && e.fatal) {
+                throw e;
+            }
             const msg = (e && e.message) ? e.message : String(e);
             if (attempt < retries) {
                 console.warn(`⚠️  第${index + 1}行 第${attempt + 1}次执行失败：${msg}；刷新页面重试...\n`);
@@ -373,6 +378,33 @@ function waitForEnter(message) {
     readline.question(message);
 }
 /**
+ * 回写用的工作簿缓存。运行期间 Excel 必须关闭（assertExcelWritable 已保证），只有本进程在写、
+ * 每次 writeFile 都落盘 → 内存累积态 ≡ 磁盘最新态。故缓存整个工作簿对象复用同一份即可，
+ * 免去每次回写都 readFile 整本表（#1 性能优化：批量场景省去数百次全量读）。
+ */
+let _writeWbCache = null;
+function getWriteWorkbook() {
+    if (_writeWbCache) {
+        return _writeWbCache;
+    }
+    const root = getProjectRoot();
+    const files = fs.readdirSync(root).filter(f => f.endsWith('.xlsx') &&
+        !f.startsWith('~$') && !f.startsWith('$') &&
+        fs.statSync(path.join(root, f)).isFile());
+    for (const f of files) {
+        try {
+            const tplPath = path.join(root, f);
+            const workbook = XLSX.readFile(tplPath);
+            _writeWbCache = { tplPath, workbook };
+            return _writeWbCache;
+        }
+        catch {
+            // 尝试下一个文件
+        }
+    }
+    return null;
+}
+/**
  * 就地把每行指定列写回根目录的原 xlsx（保留原工作簿的全部格式）。
  * 用于断点续跑：把每次算出的状态（如已建计划ID、已完成标记）写回，
  * 下次 readExcelFile 读到的就是带状态的文件，从而可恢复进度。
@@ -381,29 +413,11 @@ function waitForEnter(message) {
  * @param perRowUpdates   df[i] 对应的写入项数组；col 为 0-based 列号，value 为要写的值（空值跳过）
  */
 function writeBackInPlace(df, perRowUpdates) {
-    const root = getProjectRoot();
-    const files = fs.readdirSync(root).filter(f => f.endsWith('.xlsx') &&
-        !f.startsWith('~$') && !f.startsWith('$') &&
-        fs.statSync(path.join(root, f)).isFile());
-    if (files.length === 0) {
+    const cache = getWriteWorkbook();
+    if (!cache) {
         throw new Error('❌ 未找到原 xlsx 文件，无法回写断点状态！\n');
     }
-    // 找到第一个可读取的文件（与 readExcelFile 选择逻辑一致）
-    let tplPath = null;
-    let workbook = null;
-    for (const f of files) {
-        try {
-            tplPath = path.join(root, f);
-            workbook = XLSX.readFile(tplPath);
-            break;
-        }
-        catch {
-            // 尝试下一个文件
-        }
-    }
-    if (!workbook) {
-        throw new Error('❌ 读取原 xlsx 失败，无法回写断点状态！\n');
-    }
+    const { tplPath, workbook } = cache;
     const worksheet = workbook.Sheets[workbook.SheetNames[0]];
     const range = XLSX.utils.decode_range(worksheet['!ref'] || 'A1');
     // df[i] 对应 sheet 第 i+1 行（第 0 行是表头）
@@ -454,15 +468,57 @@ function readDoneRows(df) {
 }
 /**
  * 就地把指定行的若干单元格写回原 xlsx（其余行不动），用于断点续跑的增量持久化。
- * value=null 表示清空该单元格；undefined/空串跳过；其他写入。回写失败只告警不中断。
+ * value=null 表示清空该单元格；undefined/空串跳过；其他写入。
+ * 磁盘写成功后同步更新内存 df[rowIndex]（applyRowToMemory），使同进程行级重试时 BA/BB 守卫
+ * 能直接读到最新值，免去重试前 readExcelFile()[index] 全量重读（#2 性能优化）。
+ * 顺序关键：先写磁盘、成功后才更内存，保证内存永不超前磁盘（崩溃重启以磁盘为准）。
+ * 回写失败（磁盘满/权限/Excel 被占用等持续性故障）：抛"致命错误"（fatal:true）让 withRowRetry
+ * 立即中止整批、不重试——重试也会失败，且重跑行体会重复创建广告/创意；故中止交人工处理
+ * （清理平台半成品 + 修磁盘后重启续跑）。
  */
 function markRowAndPersist(df, rowIndex, cells) {
     const perRowUpdates = df.map((_, i) => (i === rowIndex ? cells : []));
     try {
         writeBackInPlace(df, perRowUpdates);
+        applyRowToMemory(df, rowIndex, cells);
     }
     catch (e) {
-        console.warn(`⚠️  回写断点状态失败（请关闭 Excel 后重试）：${e}\n`);
+        const err = new Error(`❌ 回写断点状态失败（请关闭 Excel、检查磁盘空间/权限后重试）：${e && e.message ? e.message : e}\n`);
+        err.fatal = true;
+        throw err;
+    }
+}
+/**
+ * 把 cells 反映到内存 df[rowIndex]（键为表头名、按列号定位，与 runners 的 Object.values(row)[col] 一致）。
+ * 陷阱①：不能赋值给 Object.values(row)[col]（那是临时数组副本，赋值无效），必须经 Object.keys 映射到键名；
+ * 陷阱②：若该行列数不足以按列号定位（表头残缺等异常），整行从磁盘回读刷新，绝不写错列（最坏退化为现状行为）。
+ */
+function applyRowToMemory(df, rowIndex, cells) {
+    const row = df[rowIndex];
+    if (!row) {
+        return;
+    }
+    const keys = Object.keys(row);
+    for (const u of cells) {
+        if (u.value === null) {
+            // 清空：内存里把对应键置空串（键已存在时）
+            if (u.col < keys.length) {
+                row[keys[u.col]] = '';
+            }
+            continue;
+        }
+        if (u.value === undefined || String(u.value).trim() === '') {
+            continue;
+        }
+        if (u.col >= keys.length) {
+            // 列对齐不可靠：回退整行从磁盘读，保证正确（异常路径，仅多一次读盘）
+            try {
+                df[rowIndex] = readExcelFile()[rowIndex];
+            }
+            catch { /* 忽略 */ }
+            return;
+        }
+        row[keys[u.col]] = String(u.value);
     }
 }
 /**

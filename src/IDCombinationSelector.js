@@ -4,14 +4,16 @@ exports.IDCombinationSelector = void 0;
 /**
  * ID组合选择器（避投组合）
  *
- * 任意数量N个ID的组合选择器
- * 核心逻辑：初始化时一次性生成所有非空组合并缓存，后续查询直接取缓存，避免重复计算
+ * 任意数量N个ID的组合选择器。
+ * 核心逻辑：第 n 次的组合由 n 的二进制位直接决定（bit i=1 → 取第 i 个 ID），按需生成、不预存。
+ * 唯一性/完备性：n∈[1, 2^N-1] 的整数 ↔ N 位非零二进制串 ↔ 非空子集，三者一一对应（双射），
+ * 故不同 n 必得不同组合，且 1..2^N-1 恰不重不漏地遍历全部 2^N-1 个非空组合。
+ * 业务只要求"每行排除一个不同的避投组合"，出现顺序无所谓，故无需预生成、每次查询 O(N)。
  */
 class IDCombinationSelector {
     customIds;
     _idCount;
     _totalValid;
-    allSelected;
     constructor(customIds) {
         // 第一步：校验ID列表不能为空
         if (!Array.isArray(customIds)) {
@@ -23,38 +25,18 @@ class IDCombinationSelector {
         }
         this.customIds = customIds;
         this._totalValid = Math.pow(2, this._idCount) - 1;
-        // 第二步：一次性生成所有组合并缓存（核心逻辑，仅执行一次）
-        this.allSelected = this.generateAllCombinations();
-        console.log(`✅ 避投包初始化完成：${this._idCount} 个ID，共 ${this._totalValid} 种组合\n`);
-    }
-    /**
-     * 私有方法：生成所有非空组合（单ID→双ID→…→N个ID），仅初始化时调用
-     */
-    generateAllCombinations() {
-        const allComb = [];
-        // 动态循环：从1个ID到N个ID的升序组合
-        for (let selectNum = 1; selectNum <= this.idCount; selectNum++) {
-            allComb.push(...this.getCombinations(this.customIds, selectNum));
+        // JS 位运算是 32 位有符号，N>31 时 n 可能 ≥2^31 导致按位生成失真；避投包业务 N 远小于此，此处仅防御性告警。
+        if (this._idCount > 31) {
+            console.warn(`⚠️  ID 数量 ${this._idCount} >31，超出按位生成的 32 位安全范围，组合可能不完整\n`);
         }
-        return allComb;
+        console.log(`✅ 避投包初始化完成：${this._idCount} 个ID，共 ${this._totalValid} 种组合（按需生成，不预存）\n`);
     }
     /**
-     * 获取指定长度的所有组合
-     */
-    getCombinations(arr, k) {
-        if (k === 0)
-            return [[]];
-        if (arr.length === 0)
-            return [];
-        const [first, ...rest] = arr;
-        const combsWithFirst = this.getCombinations(rest, k - 1).map(comb => [first, ...comb]);
-        const combsWithoutFirst = this.getCombinations(rest, k);
-        return [...combsWithFirst, ...combsWithoutFirst];
-    }
-    /**
-     * 公共查询方法：获取第n次的ID组合（直接从缓存中取，不重复生成）
-     * @param n 目标查询次数（1≤n≤总组合数）
-     * @returns 第n次选用的ID数组
+     * 公共查询方法：获取第n次的ID组合（按 n 的二进制位按需生成，不重复、不遗漏）。
+     * @param n 目标查询次数（1≤n≤总组合数 2^N-1）
+     * @returns 第n次选用的ID数组（元素按 customIds 原始顺序）
+     *
+     * 证明：n 的二进制表示唯一确定一个子集；n∈[1,2^N-1] 遍历所有非零 N 位串 → 所有非空子集各一次。
      */
     getNthChoice(n) {
         // 严格校验次数n的合法性
@@ -64,8 +46,16 @@ class IDCombinationSelector {
         if (n < 1 || n > this._totalValid) {
             throw new Error(`查询次数超出有效范围！${this._idCount}个ID的有效次数是 1 ~ ${this._totalValid}（当前输入：${n}）`);
         }
-        // 直接从缓存取值（索引n-1：数组从0开始，n从1开始）
-        return [...this.allSelected[n - 1]];
+        // bit i=1 → 取 customIds[i]；无符号右移遍历至 bits=0（最多 N 次迭代）
+        const result = [];
+        let bits = n;
+        for (let i = 0; bits > 0; i++) {
+            if (bits & 1) {
+                result.push(this.customIds[i]);
+            }
+            bits >>>= 1;
+        }
+        return result;
     }
     get idCount() {
         return this._idCount;

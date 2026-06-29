@@ -44,6 +44,10 @@ async function main() {
             if (bitouInput.toUpperCase() === 'Y') {
                 const bitouList = (0, utils_1.readTxtFile)();
                 idSelector = new IDCombinationSelector_1.IDCombinationSelector(bitouList);
+                // CPC 按行序 index+1 取避投组合（getNthChoice），最大 index+1=行数，故行数不能超过组合数 2^N-1，否则越界崩溃
+                if (df.length > idSelector.totalValid) {
+                    throw new Error(`❌ CPC 行数 ${df.length} 超过避投组合上限 ${idSelector.totalValid}（${idSelector.idCount} 个避投包 → 2^N-1 种组合），无法为每行分配唯一避投组合，已中止\n`);
+                }
             }
             await (0, run_adq_1.runAdq)(df, idSelector);
         }
