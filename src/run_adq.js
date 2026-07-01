@@ -34,7 +34,8 @@ async function runAdq(df, idSelector) {
             if (!/^\d+$/.test(hot) || Number(hot) < 1) {
                 hottagInvalid.push(i + 1);
             }
-            if (!HOTTAG_SUPPORTED.has(pagePst)) {
+            // 点位可能带 -标签/-卖点图 后缀（如「...-行动按钮-卖点图」），归一化后判断是否支持卖点图
+            if (!HOTTAG_SUPPORTED.has(pagePst.replace(/-(标签|卖点图)$/, ''))) {
                 hottagUnsupported.push(i + 1);
             }
         }
@@ -57,8 +58,12 @@ async function runAdq(df, idSelector) {
     console.log(`📦 恢复断点：已完成 ${doneRows.size} 条\n`);
     // 页面位置映射
     const pagePositionMap = {
+        '朋友圈-卡片广告-横版大图-行动按钮-标签': '卡片广告 横版大图 16:9',
+        '朋友圈-卡片广告-横版大图-行动按钮-卖点图': '卡片广告 横版大图 16:9',
         '朋友圈-卡片广告-横版大图-行动按钮': '卡片广告 横版大图 16:9',
         '朋友圈-卡片广告-横版大图': '卡片广告 横版大图 16:9',
+        '朋友圈-卡片广告-横版视频-行动按钮-标签': '卡片广告 横版视频 16:9',
+        '朋友圈-卡片广告-横版视频-行动按钮-卖点图': '卡片广告 横版视频 16:9',
         '朋友圈-卡片广告-横版视频-行动按钮': '卡片广告 横版视频 16:9',
         '朋友圈-卡片广告-横版视频': '卡片广告 横版视频 16:9',
         '朋友圈-竖版大图': '竖版大图 9:16',
@@ -168,7 +173,7 @@ async function runAdq(df, idSelector) {
         // 创意部分
         // 选点位
         await page.locator('button#creative-type-btn').click();
-        const positionText = pagePositionMap[pagePst] || String(pagePst);
+        const positionText = pagePositionMap[pagePst] || pagePositionMap[pagePst.replace(/-(标签|卖点图)$/, '')] || String(pagePst);
         // 点位选择：先尝试直接点目标点位（正则 + first，1s 超时）；1s 内点不到说明在另一分组，切开关再点
         const positionRegex = new RegExp(positionText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
         const positionOpt = page.locator('span.odc-text.ellipsis').filter({ hasText: positionRegex }).first();
@@ -242,8 +247,8 @@ async function runAdq(df, idSelector) {
             await page.locator('div.h-full.flex-col.gap-4.px-12.justify-center.relative.odc-hover.odc-flex.odc-frame.flex.flex-row span.ellipsis.odc-text.odc-text-small.ellipsis')
                 .filter({ hasText: new RegExp(`^${String(logo)}$`) }).first().click();
         }
-        // 营销组件
-        const componentFunc = componentMap[pagePst];
+        // 营销组件（pagePst 带 -标签/-卖点图 后缀时，回退到基础点位查函数）
+        const componentFunc = componentMap[pagePst] || componentMap[pagePst.replace(/-(标签|卖点图)$/, '')];
         if (componentFunc) {
             await componentFunc();
         }
