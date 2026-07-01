@@ -238,7 +238,7 @@ async function runAdq(df, idSelector) {
         }
         // 品牌形象
         await page.getByText('品牌形象', { exact: true }).click();
-        if (pagePst === '视频号-竖版视频' || pagePst === '视频号-横版视频' || pagePst === '视频号评论区广告-竖版视频' || pagePst === '视频号评论区广告-横版视频') {
+        if (pagePst === '视频号-竖版视频' || pagePst === '视频号-横版视频' || pagePst === '视频号评论区广告-竖版视频' || pagePst === '视频号评论区广告-横版视频' || pagePst === '视频号评论区广告-横版大图' || pagePst === '视频号评论区广告-竖版大图') {
             await page.locator('div.h-full.flex-col.gap-4.px-12.justify-center.relative.odc-hover.odc-flex.odc-frame.flex.flex-row span.ellipsis.odc-text.odc-text-small.ellipsis')
                 .filter({ hasText: /^肯德基$/ }).first().click();
         }
@@ -348,7 +348,7 @@ async function wxFriendsCardBp(page, actionBtn, firstReply, tagtag,hottag) {
     }
     if (hottag !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '卖点图' }).click();
-        await page.locator('div[tabindex="0"].x-checkable-div.w-full.tw-flex.tw-items-center[data-hottag][style="height: 80px;"]').nth(hottag-1).click();
+        await page.locator('div[tabindex="0"].x-checkable-div.w-full.tw-flex.tw-items-center[data-hottag][style="height: 80px;"] div.odc-figure.has-backdrop.radius-6[style="width: 60px; height: 60px;"]').nth(hottag-1).click();
     }
 }
 async function wxFriendsCardVideo(page, actionBtn, firstReply, tagtag,hottag) {
@@ -380,7 +380,7 @@ async function wxFriendsCardVideo(page, actionBtn, firstReply, tagtag,hottag) {
     }
     if (hottag !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '卖点图' }).click();
-        await page.locator('div[tabindex="0"].x-checkable-div.w-full.tw-flex.tw-items-center[data-hottag][style="height: 80px;"]').nth(hottag-1).click();
+        await page.locator('div[tabindex="0"].x-checkable-div.w-full.tw-flex.tw-items-center[data-hottag][style="height: 80px;"] div.odc-figure.has-backdrop.radius-6[style="width: 60px; height: 60px;"]').nth(hottag-1).click();
     }
 }
 async function wxFriendsShubanBp(page, actionBtn, firstReply) {

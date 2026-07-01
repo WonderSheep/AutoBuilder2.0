@@ -494,17 +494,17 @@ function markRowAndPersist(df, rowIndex, cells) {
 /**
  * 把 cells 反映到内存 df[rowIndex]（键为表头名、按列号定位，与 runners 的 Object.values(row)[col] 一致）。
  * 陷阱①：不能赋值给 Object.values(row)[col]（那是临时数组副本，赋值无效），必须经 Object.keys 映射到键名；
- * 陷阱②：若该行列数不足以按列号定位（表头残缺等异常），整行从磁盘回读刷新，绝不写错列（最坏退化为现状行为）。
+ * 陷阱②：若该行列数不足（如 BA/BB 在 col57/58 超出原表头列数），补 __PAD_ 占位键扩展到目标列，保持列对齐、绝不读盘。
  */
 function applyRowToMemory(df, rowIndex, cells) {
     const row = df[rowIndex];
     if (!row) {
         return;
     }
-    const keys = Object.keys(row);
     for (const u of cells) {
         if (u.value === null) {
             // 清空：内存里把对应键置空串（键已存在时）
+            const keys = Object.keys(row);
             if (u.col < keys.length) {
                 row[keys[u.col]] = '';
             }
@@ -513,13 +513,12 @@ function applyRowToMemory(df, rowIndex, cells) {
         if (u.value === undefined || String(u.value).trim() === '') {
             continue;
         }
-        if (u.col >= keys.length) {
-            // 列对齐不可靠：回退整行从磁盘读，保证正确（异常路径，仅多一次读盘）
-            try {
-                df[rowIndex] = readExcelFile()[rowIndex];
-            }
-            catch { /* 忽略 */ }
-            return;
+        // 确保 row 键数 > u.col：不足则补 __PAD_ 占位键，保持 Object.values(row)[col] 列对齐、绝不读盘。
+        // （BA/BB 在 col57/58 常超出 Excel 原表头列数；旧逻辑回退 readExcelFile 会导致每行读盘+刷日志）
+        let keys = Object.keys(row);
+        while (keys.length <= u.col) {
+            row[`__PAD_${keys.length}`] = '';
+            keys = Object.keys(row);
         }
         row[keys[u.col]] = String(u.value);
     }
