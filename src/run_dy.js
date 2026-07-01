@@ -33,12 +33,12 @@ async function runDy(df) {
             // 数据：0策略ID 2活动名 18脱敏人群 20创意名 23区域 26购买类型
             //       35曝光监测 36点击监测 39RTA 40广告账户 44媒体人群 45人群类型
             // 复制源：AP(41)=复制源项目copyAd   AQ(42)=复制源单元copyUn
-            // 标志位：BA(52)='1' 项目已建     BB(53)='1' 整行完成（readDoneRows 据此跳过整行）
+            // 标志位：BA(57)='1' 项目已建     BB(58)='1' 整行完成（readDoneRows 据此跳过整行）
             // 续跑写入：建完项目→project_id 写回 AP(覆盖copyAd) 且 BA 置 '1'；
             //          建完单元→清空 AQ 且 BB 置 '1'。
             // 重跑判定：BB='1' 整行跳过；仅 BA='1'（项目已建、单元没建完）则跳过建项目、
             //          复用 AP 里的 project_id 直接建单元，避免重复建项目。
-            // 收尾：BA/BB(52/53) 超出 trim 上限(43)，全部完成后自动删除；AP 的 project_id 保留进交付表。
+            // 收尾：BA/BB(57/58) 超出 trim 上限(43)，全部完成后自动删除；AP 的 project_id 保留进交付表。
             const values = Object.values(row);
             const strategyId = values[0]; // 策略ID
             const campaignNm = values[2]; // 活动名称
@@ -56,7 +56,7 @@ async function runDy(df) {
             const audienceTag = values[45]; // 人群类型
             const unitNm = `${strategyId}_${campaignNm}_${creativeNm}_${rtaId}_${audienceTag}_${audience}_${city}_${sellType}_${Date.now()}`;
             // 断点续跑：BA(52)='1' 表示项目已建过（上次崩在建项目之后），复用 AP(41) 的 project_id 直接建单元，避免重复建项目
-            const projectBuilt = String(values[52] || '').trim() === utils_1.TAG_VALUE;
+            const projectBuilt = String(values[utils_1.BA_COL] || '').trim() === utils_1.TAG_VALUE;
             let projectId;
             if (projectBuilt) {
                 projectId = String(values[41] || '').trim();
@@ -99,7 +99,7 @@ async function runDy(df) {
                 // 立即回写：AP(41) 记录新 project_id（覆盖已用完的 copyAd），BA(52) 置 '1' 标记项目已建，防止在建单元途中崩溃导致重复建项目
                 (0, utils_1.markRowAndPersist)(df, index, [
                     { col: 41, value: projectId },
-                    { col: 52, value: utils_1.TAG_VALUE },
+                    { col: utils_1.BA_COL, value: utils_1.TAG_VALUE },
                 ]);
             }
             // 单元

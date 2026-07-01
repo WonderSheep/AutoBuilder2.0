@@ -449,7 +449,10 @@ function writeBackInPlace(df, perRowUpdates) {
 // ===== 断点续跑（三平台统一）：BB 列完成标记 + 循环后删列 =====
 // BB 列（第 54 列，0-based 53）填 TAG_VALUE 表示"该行已完成"，三平台共用。
 // 用户可在 Excel 里直接增删该值来控制重跑：删掉→该行重跑；填上→强制跳过。
-const TAG_COL = 53;
+// BA/BB 断点标记列（0-based）。原 52/53，因创意内容列扩展（加卖点图等）后移 5 列到 57/58，
+// 给前面创意内容腾空间、避免与数据列冲突。三平台共用：adq/dy 用 BA+BB，bili 仅 BB。
+const BA_COL = 57;
+const TAG_COL = 58;
 const TAG_VALUE = '1';
 // 删列时保留 A-AR（0-based 0-43），删除 AS 及之后（含 BB），与原裁剪逻辑一致。
 const TRIM_MAX_COL = 43;
@@ -579,6 +582,7 @@ function trimColumnsIfAllDone(df, doneRows) {
     console.log(`⏸️  尚未全部完成（${doneRows.size}/${df.length}），保留全部列以便断点续跑\n`);
     return false;
 }
+exports.BA_COL = BA_COL;
 exports.TAG_COL = TAG_COL;
 exports.TAG_VALUE = TAG_VALUE;
 exports.TRIM_MAX_COL = TRIM_MAX_COL;

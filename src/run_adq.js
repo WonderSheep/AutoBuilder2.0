@@ -8,6 +8,44 @@ const utils_1 = require("./utils");
  * 腾讯广告搭建主函数
  */
 async function runAdq(df, idSelector) {
+    // ─── 搭建前校验（浏览器拉起前）───
+    const doneRows = (0, utils_1.readDoneRows)(df);
+    const tagHotConflicts = [];   // 标签(col49) 与 卖点图(col50) 互斥
+    const hottagInvalid = [];      // 卖点图必须为正整数（第几个）
+    const hottagUnsupported = [];  // 卖点图仅朋友圈卡片广告点位支持
+    const HOTTAG_SUPPORTED = new Set([
+        '朋友圈-卡片广告-横版大图-行动按钮',
+        '朋友圈-卡片广告-横版大图',
+        '朋友圈-卡片广告-横版视频-行动按钮',
+        '朋友圈-卡片广告-横版视频',
+    ]);
+    for (let i = 0; i < df.length; i++) {
+        if (doneRows.has(i)) {
+            continue; // 已完成行不再搭建，无需校验
+        }
+        const v = Object.values(df[i]);
+        const tag = String(v[49] || '').trim();     // 标签
+        const hot = String(v[50] || '').trim();     // 卖点图
+        const pagePst = String(v[15] || '').trim(); // 点位
+        if (tag !== '' && hot !== '') {
+            tagHotConflicts.push(i + 1);
+        }
+        if (hot !== '') {
+            if (!/^\d+$/.test(hot) || Number(hot) < 1) {
+                hottagInvalid.push(i + 1);
+            }
+            if (!HOTTAG_SUPPORTED.has(pagePst)) {
+                hottagUnsupported.push(i + 1);
+            }
+        }
+    }
+    const errs = [];
+    if (tagHotConflicts.length) errs.push(`以下行同时存在「标签」和「卖点图」（互斥）：第 ${tagHotConflicts.join('、')} 行`);
+    if (hottagInvalid.length) errs.push(`以下行「卖点图」必须为正整数（填第几个）：第 ${hottagInvalid.join('、')} 行`);
+    if (hottagUnsupported.length) errs.push(`以下行填了「卖点图」但其点位不支持（仅朋友圈卡片广告支持）：第 ${hottagUnsupported.join('、')} 行`);
+    if (errs.length) {
+        throw new Error('❌ 搭建前校验未通过：\n' + errs.join('\n') + '\n请修正后重跑。\n');
+    }
     // 启动浏览器
     const { browser, context } = await (0, utils_1.launchBrowser)('auth_state_adq.json');
     try {
@@ -16,8 +54,6 @@ async function runAdq(df, idSelector) {
     await page.goto('https://ad.qq.com');
     (0, utils_1.waitForEnter)('确保当前已处于登录状态后，按下回车开始搭建！\n');
     await (0, utils_1.saveAuthState)(context, 'auth_state_adq.json');
-    // 断点续跑：从 BB 列恢复已完成行
-    const doneRows = (0, utils_1.readDoneRows)(df);
     console.log(`📦 恢复断点：已完成 ${doneRows.size} 条\n`);
     // 页面位置映射
     const pagePositionMap = {
@@ -52,15 +88,15 @@ async function runAdq(df, idSelector) {
         // ─── 腾讯(adq) 列约定（列号均为 0-based）与断点续跑 ───
         // 数据：0策略ID 2活动名 13媒体 15点位 18脱敏人群 20创意名 23区域
         //       29deeplink 31小程序链接 32落地页类型 40广告账户
-        //       44人群标签 45素材 46文案 47品牌形象 48行动按钮 49标签 50首评回复 51浮层卡片
+        //       44人群标签 45素材 46文案 47品牌形象 48行动按钮 49标签 50卖点图 51首评回复 52浮层卡片
         // 复制源：col42=复制源广告copyAd（选点位成功后覆盖为 adgroupId）
         // 回写ID：col43=dynamicCreativeId
-        // 标志位：BA(52)='1' 广告组已建   BB(53)='1' 整行完成（readDoneRows 据此跳过整行）
+        // 标志位：BA(57)='1' 广告组已建   BB(58)='1' 整行完成（readDoneRows 据此跳过整行）
         // 续跑写入：选点位成功（=广告层级已建）→adgroupId 写回 col42(覆盖copyAd) 且 BA 置 '1'；
         //          提交创意后→dynamicCreativeId 写 col43 且 BB 置 '1'。
         // 重跑判定：BB='1' 整行跳过；仅 BA='1'（广告组已建、创意没建完）则直达
         //          creatives-add?adgroup_id= 重选点位+继续创意，跳过广告组创建，避免重复建广告组。
-        // 收尾：BA/BB(52/53) 超出 trim 上限(43)，全部完成后自动删除；col42 的 adgroupId 保留进交付表。
+        // 收尾：BA/BB(57/58) 超出 trim 上限(43)，全部完成后自动删除；col42 的 adgroupId 保留进交付表。
         const values = Object.values(row);
         const strategyId = values[0]; // 策略ID
         const campaignNm = values[2]; // 活动名称
@@ -81,13 +117,14 @@ async function runAdq(df, idSelector) {
         const logo = String(values[47] || '').trim() || '肯德基'; // 品牌形象（直接填中文，空则默认肯德基）
         const actionBtn = String(values[48] || '').trim() || '立即购买'; // 行动按钮（空则默认立即购买）
         const tagtag = String(values[49] || '').trim(); // 标签
-        const firstReply = String(values[50] || '').trim(); // 首评回复
-        const floatCard = String(values[51] || '').trim(); // 视频号浮层卡片
+        const hottag = String(values[50] || '').trim(); // 卖点图
+        const firstReply = String(values[51] || '').trim(); // 首评回复
+        const floatCard = String(values[52] || '').trim(); // 视频号浮层卡片
         // 营销组件映射（依赖本行 actionBtn/firstReply/floatCard/tagtag，故每行重建）
-        const componentMap = buildComponentMap(page, actionBtn, firstReply, floatCard, tagtag);
+        const componentMap = buildComponentMap(page, actionBtn, firstReply, floatCard, tagtag, hottag);
         const unitNm = `${strategyId}_${campaignNm}_${media}_${pagePst}_${creativeNm}_${audience}_${audienceTag}_${city}`;
         // 断点续跑：BA(52)='1' 表示广告组已建过，直达创意配置页跳过广告组创建
-        const adgroupBuilt = String(values[52] || '').trim() === utils_1.TAG_VALUE;
+        const adgroupBuilt = String(values[utils_1.BA_COL] || '').trim() === utils_1.TAG_VALUE;
         let adgroupId;
         if (adgroupBuilt) {
             adgroupId = String(values[42] || '').trim();
@@ -152,7 +189,7 @@ async function runAdq(df, idSelector) {
             }
             (0, utils_1.markRowAndPersist)(df, index, [
                 { col: 42, value: adgroupId },
-                { col: 52, value: utils_1.TAG_VALUE },
+                { col: utils_1.BA_COL, value: utils_1.TAG_VALUE },
             ]);
         }
         // 图片或视频
@@ -253,12 +290,12 @@ async function runAdq(df, idSelector) {
  * 构建"点位 → 营销组件设置函数"映射。
  * 因 actionBtn/firstReply/floatCard/tagtag 现按行从 Excel 读取，故每行调用一次重建。
  */
-function buildComponentMap(page, actionBtn, firstReply, floatCard, tagtag) {
+function buildComponentMap(page, actionBtn, firstReply, floatCard, tagtag, hottag) {
     return {
-        '朋友圈-卡片广告-横版大图-行动按钮': () => wxFriendsCardBp(page, actionBtn, firstReply, tagtag),
-        '朋友圈-卡片广告-横版大图': () => wxFriendsCardBp(page, actionBtn, firstReply, tagtag),
-        '朋友圈-卡片广告-横版视频-行动按钮': () => wxFriendsCardVideo(page, actionBtn, firstReply, tagtag),
-        '朋友圈-卡片广告-横版视频': () => wxFriendsCardVideo(page, actionBtn, firstReply, tagtag),
+        '朋友圈-卡片广告-横版大图-行动按钮': () => wxFriendsCardBp(page, actionBtn, firstReply, tagtag, hottag),
+        '朋友圈-卡片广告-横版大图': () => wxFriendsCardBp(page, actionBtn, firstReply, tagtag, hottag),
+        '朋友圈-卡片广告-横版视频-行动按钮': () => wxFriendsCardVideo(page, actionBtn, firstReply, tagtag, hottag),
+        '朋友圈-卡片广告-横版视频': () => wxFriendsCardVideo(page, actionBtn, firstReply, tagtag, hottag),
         '朋友圈-竖版大图': () => wxFriendsShubanBp(page, actionBtn, firstReply),
         '朋友圈-橱窗广告-图片': () => wxFriendsWindows(page, actionBtn, firstReply),
         '订阅号消息列表-横版大图': () => wxSubBp(page, actionBtn),
@@ -277,7 +314,7 @@ function buildComponentMap(page, actionBtn, firstReply, floatCard, tagtag) {
     };
 }
 // 营销组件函数
-async function wxFriendsCardBp(page, actionBtn, firstReply, tagtag) {
+async function wxFriendsCardBp(page, actionBtn, firstReply, tagtag,hottag) {
     await page.getByText('营销组件').first().click();
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '客服问答' }).click();
     //if (firstReply === '') {
@@ -285,6 +322,9 @@ async function wxFriendsCardBp(page, actionBtn, firstReply, tagtag) {
     //}
     if (tagtag !== '') {
         await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '标签' }).click();
+    }
+    if (hottag !== '') {
+        await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '卖点图' }).click();
     }
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '行动按钮' }).click();
     await page.locator('span.odc-text.ellipsis').filter({ hasText: '行动按钮' }).click();
@@ -300,9 +340,13 @@ async function wxFriendsCardBp(page, actionBtn, firstReply, tagtag) {
     if (firstReply !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '首评回复' }).click();
         await page.getByText(firstReply).first().click();
+    }
+    if (hottag !== '') {
+        await page.locator('span.odc-text.ellipsis').filter({ hasText: '卖点图' }).click();
+        await page.locator('div[tabindex="0"].x-checkable-div.w-full.tw-flex.tw-items-center[data-hottag][style="height: 80px;"]').nth(hottag-1).click();
     }
 }
-async function wxFriendsCardVideo(page, actionBtn, firstReply, tagtag) {
+async function wxFriendsCardVideo(page, actionBtn, firstReply, tagtag,hottag) {
     await page.getByText('营销组件').first().click();
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '客服问答' }).click();
     //if (firstReply === '') {
@@ -310,6 +354,9 @@ async function wxFriendsCardVideo(page, actionBtn, firstReply, tagtag) {
     //}
     if (tagtag !== '') {
         await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '标签' }).click();
+    }
+    if (hottag !== '') {
+        await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '卖点图' }).click();
     }
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '行动按钮' }).click();
     await page.locator('span.odc-text.ellipsis').filter({ hasText: '行动按钮' }).click();
@@ -325,6 +372,10 @@ async function wxFriendsCardVideo(page, actionBtn, firstReply, tagtag) {
     if (firstReply !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '首评回复' }).click();
         await page.getByText(firstReply).first().click();
+    }
+    if (hottag !== '') {
+        await page.locator('span.odc-text.ellipsis').filter({ hasText: '卖点图' }).click();
+        await page.locator('div[tabindex="0"].x-checkable-div.w-full.tw-flex.tw-items-center[data-hottag][style="height: 80px;"]').nth(hottag-1).click();
     }
 }
 async function wxFriendsShubanBp(page, actionBtn, firstReply) {
