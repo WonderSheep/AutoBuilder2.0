@@ -10,14 +10,24 @@ const utils_1 = require("./utils");
 async function runAdq(df, idSelector) {
     // ─── 搭建前校验（浏览器拉起前）───
     const doneRows = (0, utils_1.readDoneRows)(df);
-    const tagHotConflicts = [];   // 标签(col49) 与 卖点图(col50) 互斥
+    const tagHotConflicts = [];    // 标签(col49) 与 卖点图(col50) 互斥
+    const tagtagInvalid = [];      // 标签必须为正整数（第几个）
+    const firstReplyInvalid = [];  // 首评回复必须为正整数（第几个）
     const hottagInvalid = [];      // 卖点图必须为正整数（第几个）
     const hottagUnsupported = [];  // 卖点图仅朋友圈卡片广告点位支持
+    const floatCardInvalid = [];     // 浮层卡片必须为正整数（第几个）
+    const floatCardUnsupported = []; // 浮层卡片仅视频号点位支持
     const HOTTAG_SUPPORTED = new Set([
         '朋友圈-卡片广告-横版大图-行动按钮',
         '朋友圈-卡片广告-横版大图',
         '朋友圈-卡片广告-横版视频-行动按钮',
         '朋友圈-卡片广告-横版视频',
+    ]);
+    const FLOATCARD_SUPPORTED = new Set([
+        '视频号-竖版视频',
+        '视频号-横版视频',
+        '视频号评论区广告-竖版视频',
+        '视频号评论区广告-横版视频',
     ]);
     for (let i = 0; i < df.length; i++) {
         if (doneRows.has(i)) {
@@ -26,9 +36,21 @@ async function runAdq(df, idSelector) {
         const v = Object.values(df[i]);
         const tag = String(v[49] || '').trim();     // 标签
         const hot = String(v[50] || '').trim();     // 卖点图
+        const fr = String(v[51] || '').trim();      // 首评回复
+        const fc = String(v[52] || '').trim();      // 浮层卡片
         const pagePst = String(v[15] || '').trim(); // 点位
         if (tag !== '' && hot !== '') {
             tagHotConflicts.push(i + 1);
+        }
+        if (tag !== '') {
+            if (!/^\d+$/.test(tag) || Number(tag) < 1) {
+                tagtagInvalid.push(i + 1);
+            }
+        }
+        if (fr !== '') {
+            if (!/^\d+$/.test(fr) || Number(fr) < 1) {
+                firstReplyInvalid.push(i + 1);
+            }
         }
         if (hot !== '') {
             if (!/^\d+$/.test(hot) || Number(hot) < 1) {
@@ -39,11 +61,23 @@ async function runAdq(df, idSelector) {
                 hottagUnsupported.push(i + 1);
             }
         }
+        if (fc !== '') {
+            if (!/^\d+$/.test(fc) || Number(fc) < 1) {
+                floatCardInvalid.push(i + 1);
+            }
+            if (!FLOATCARD_SUPPORTED.has(pagePst.replace(/-(标签|卖点图)$/, ''))) {
+                floatCardUnsupported.push(i + 1);
+            }
+        }
     }
     const errs = [];
     if (tagHotConflicts.length) errs.push(`以下行同时存在「标签」和「卖点图」（互斥）：第 ${tagHotConflicts.join('、')} 行`);
+    if (tagtagInvalid.length) errs.push(`以下行「标签」必须为正整数（填第几个）：第 ${tagtagInvalid.join('、')} 行`);
+    if (firstReplyInvalid.length) errs.push(`以下行「首评回复」必须为正整数（填第几个）：第 ${firstReplyInvalid.join('、')} 行`);
     if (hottagInvalid.length) errs.push(`以下行「卖点图」必须为正整数（填第几个）：第 ${hottagInvalid.join('、')} 行`);
     if (hottagUnsupported.length) errs.push(`以下行填了「卖点图」但其点位不支持（仅朋友圈卡片广告支持）：第 ${hottagUnsupported.join('、')} 行`);
+    if (floatCardInvalid.length) errs.push(`以下行「浮层卡片」必须为正整数（填第几个）：第 ${floatCardInvalid.join('、')} 行`);
+    if (floatCardUnsupported.length) errs.push(`以下行填了「浮层卡片」但其点位不支持（仅视频号点位支持）：第 ${floatCardUnsupported.join('、')} 行`);
     if (errs.length) {
         throw new Error('❌ 搭建前校验未通过：\n' + errs.join('\n') + '\n请修正后重跑。\n');
     }
@@ -340,15 +374,27 @@ async function wxFriendsCardBp(page, actionBtn, firstReply, tagtag,hottag) {
     await page.getByRole('button', { name: '确定' }).click();
     if (tagtag !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '标签' }).click();
-        await page.locator('div.tw-inline-flex.tw-items-center.tw-cursor-pointer.tw-transition-colors').filter({ hasText: new RegExp(`^${tagtag}$`) }).first().click();
+        // 共同容器 div.x-card.x-middle-card + h5[title="标签"] 锁定标签区块（隔层级不影响，Playwright 按后代匹配）
+        await page.locator('div.x-card.x-middle-card')
+            .filter({ has: page.locator('h5[title="标签"]') })
+            .locator('div[tabindex="0"][data-hottag]')
+            .nth(tagtag-1).click();
     }
     if (firstReply !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '首评回复' }).click();
-        await page.getByText(firstReply).first().click();
+        // 共同容器 div.x-card.x-middle-card + h5[title="首评回复"] 锁定区块
+        await page.locator('div.x-card.x-middle-card')
+            .filter({ has: page.locator('h5[title="首评回复"]') })
+            .locator('div[tabindex="0"][data-hottag]')
+            .nth(firstReply-1).click();
     }
     if (hottag !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '卖点图' }).click();
-        await page.locator('div[tabindex="0"].x-checkable-div.w-full.tw-flex.tw-items-center[data-hottag][style="height: 80px;"] div.odc-figure.has-backdrop.radius-6[style="width: 60px; height: 60px;"]').nth(hottag-1).click();
+        // 共同容器 + h5[title="卖点图"] 锁定卖点图区块
+        await page.locator('div.x-card.x-middle-card')
+            .filter({ has: page.locator('h5[title]').filter({ hasText: '卖点图' }) })
+            .locator('div[tabindex="0"][data-hottag]')
+            .nth(hottag-1).click();
     }
 }
 async function wxFriendsCardVideo(page, actionBtn, firstReply, tagtag,hottag) {
@@ -372,15 +418,28 @@ async function wxFriendsCardVideo(page, actionBtn, firstReply, tagtag,hottag) {
     await page.getByRole('button', { name: '确定' }).click();
     if (tagtag !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '标签' }).click();
-        await page.locator('div.tw-inline-flex.tw-items-center.tw-cursor-pointer.tw-transition-colors').filter({ hasText: new RegExp(`^${tagtag}$`) }).first().click();
+        // 共同容器 div.x-card.x-middle-card（隔层级不影响，Playwright 按后代匹配）+
+        // h5[title="标签"] 锁定标签区块，再在其中找目标项
+        await page.locator('div.x-card.x-middle-card')
+            .filter({ has: page.locator('h5[title="标签"]') })
+            .locator('div[tabindex="0"][data-hottag]')
+            .nth(tagtag-1).click();
     }
     if (firstReply !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '首评回复' }).click();
-        await page.getByText(firstReply).first().click();
+        // 共同容器 div.x-card.x-middle-card + h5[title="首评回复"] 锁定区块
+        await page.locator('div.x-card.x-middle-card')
+            .filter({ has: page.locator('h5[title="首评回复"]') })
+            .locator('div[tabindex="0"][data-hottag]')
+            .nth(firstReply-1).click();
     }
     if (hottag !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '卖点图' }).click();
-        await page.locator('div[tabindex="0"].x-checkable-div.w-full.tw-flex.tw-items-center[data-hottag][style="height: 80px;"] div.odc-figure.has-backdrop.radius-6[style="width: 60px; height: 60px;"]').nth(hottag-1).click();
+        // 共同容器 + h5[title="卖点图"] 锁定卖点图区块
+        await page.locator('div.x-card.x-middle-card')
+            .filter({ has: page.locator('h5[title]').filter({ hasText: '卖点图' }) })
+            .locator('div[tabindex="0"][data-hottag]')
+            .nth(hottag-1).click();
     }
 }
 async function wxFriendsShubanBp(page, actionBtn, firstReply) {
@@ -399,7 +458,11 @@ async function wxFriendsShubanBp(page, actionBtn, firstReply) {
     await page.getByRole('button', { name: '确定' }).click();
     if (firstReply !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '首评回复' }).click();
-        await page.getByText(firstReply).first().click();
+        // 共同容器 div.x-card.x-middle-card + h5[title="首评回复"] 锁定区块，按索引选
+        await page.locator('div.x-card.x-middle-card')
+            .filter({ has: page.locator('h5[title="首评回复"]') })
+            .locator('div[tabindex="0"][data-hottag]')
+            .nth(firstReply-1).click();
     }
 }
 async function wxFriendsWindows(page, actionBtn, firstReply) {
@@ -418,7 +481,11 @@ async function wxFriendsWindows(page, actionBtn, firstReply) {
     await page.getByRole('button', { name: '确定' }).click();
     if (firstReply !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '首评回复' }).click();
-        await page.getByText(firstReply).first().click();
+        // 共同容器 div.x-card.x-middle-card + h5[title="首评回复"] 锁定区块，按索引选
+        await page.locator('div.x-card.x-middle-card')
+            .filter({ has: page.locator('h5[title="首评回复"]') })
+            .locator('div[tabindex="0"][data-hottag]')
+            .nth(firstReply-1).click();
     }
 }
 async function wxSubBp(page, actionBtn) {
@@ -454,10 +521,17 @@ async function wxTvShubanVideo(page, floatCard, tagtag) {
         await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '标签' }).click();
     }
     await page.locator('span.odc-text.ellipsis').filter({ hasText: '浮层卡片' }).click();
-    await page.locator('span.tw-text-xs.tw-text-text-secondary.tw-font-semibold.tw-truncate').filter({ hasText: floatCard }).click();
+    await page.locator('div.x-card.x-middle-card')
+            .filter({ has: page.locator('h5[title]').filter({ hasText: '浮层卡片' }) })
+            .locator('div[tabindex="0"][data-hottag]')
+            .nth(floatCard-1).click();
     if (tagtag !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '标签' }).click();
-        await page.locator('div.tw-inline-flex.tw-items-center.tw-cursor-pointer.tw-transition-colors').filter({ hasText: new RegExp(`^${tagtag}$`) }).first().click();
+        // 共同容器 div.x-card.x-middle-card + h5[title="标签"] 锁定标签区块，按索引选
+        await page.locator('div.x-card.x-middle-card')
+            .filter({ has: page.locator('h5[title="标签"]') })
+            .locator('div[tabindex="0"][data-hottag]')
+            .nth(tagtag-1).click();
     }
 }
 async function wxTvHengbanVideo(page, floatCard, tagtag) {
@@ -467,10 +541,17 @@ async function wxTvHengbanVideo(page, floatCard, tagtag) {
         await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '标签' }).click();
     }
     await page.locator('span.odc-text.ellipsis').filter({ hasText: '浮层卡片' }).click();
-    await page.locator('span.tw-text-xs.tw-text-text-secondary.tw-font-semibold.tw-truncate').filter({ hasText: floatCard }).click();
+    await page.locator('div.x-card.x-middle-card')
+        .filter({ has: page.locator('h5[title]').filter({ hasText: '浮层卡片' }) })
+        .locator('div[tabindex="0"][data-hottag]')
+        .nth(floatCard-1).click();
     if (tagtag !== '') {
         await page.locator('span.odc-text.ellipsis').filter({ hasText: '标签' }).click();
-        await page.locator('div.tw-inline-flex.tw-items-center.tw-cursor-pointer.tw-transition-colors').filter({ hasText: new RegExp(`^${tagtag}$`) }).first().click();
+        // 共同容器 div.x-card.x-middle-card + h5[title="标签"] 锁定标签区块，按索引选
+        await page.locator('div.x-card.x-middle-card')
+            .filter({ has: page.locator('h5[title="标签"]') })
+            .locator('div[tabindex="0"][data-hottag]')
+            .nth(tagtag-1).click();
     }
 }
 async function gdtShubanBp(page, actionBtn) {

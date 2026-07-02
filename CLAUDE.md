@@ -39,7 +39,7 @@ AutoBuilder 2.0 —— 一个基于 Playwright 的浏览器自动化工具，用
 
 ## 各平台 runner 的模式
 
-- **[run_adq.js](src/run_adq.js)**（腾讯）最大、最复杂。每个广告单元都从复制一个已有广告（`ref_adgroup_id`）开始，然后创意部分按"点位"通过两张分发表填充：`pagePositionMap`（点位 → UI 上的位置文案）和 `componentMap`（点位 → 营销组件设置函数，如 `wxFriendsCardBp`、`wxTvShubanVideo`；因创意内容按行从 Excel 读，它被抽成工厂函数 `buildComponentMap` 在循环内每行重建）。创意内容（人群标签/素材/文案/品牌形象/行动按钮/标签/首评回复/浮层卡片）从 `values[44-51]` 每行读取，不再在循环前手动 `promptUser` 输入。CPC 排除人群按**行序** `getNthChoice(index + 1)` 取避投组合。文件含三个导出：`runAdq`（创建）、`runAdqReplace`（替换创意）、`runAdqCreTemplate`（创建定向模版，按 2^N−1 个组合循环，不参与行级断点续跑）。
+- **[run_adq.js](src/run_adq.js)**（腾讯）最大、最复杂。每个广告单元都从复制一个已有广告（`ref_adgroup_id`）开始，然后创意部分按"点位"通过两张分发表填充：`pagePositionMap`（点位 → UI 上的位置文案）和 `componentMap`（点位 → 营销组件设置函数，如 `wxFriendsCardBp`、`wxTvShubanVideo`；因创意内容按行从 Excel 读，它被抽成工厂函数 `buildComponentMap` 在循环内每行重建）。创意内容（人群标签/素材/文案/品牌形象/行动按钮/标签/首评回复/浮层卡片）从 `values[44-51]` 每行读取，不再在循环前手动 `promptUser` 输入。其中 **标签(49)/卖点图(50)/首评回复(51)/浮层卡片(52)** 一律填**正整数**（第几个，留空=不配）；营销组件统一按「`div.x-card.x-middle-card` → `filter h5[区块名]` → `div[tabindex="0"][data-hottag]` → `nth(值-1)`」定位（浮层卡片的 h5 用 `h5[title]`+`hasText:'浮层卡片'`，其余三个用 `h5[title="区块名"]`）。**`runAdq` 启动时搭建前校验**（浏览器拉起前）：四者须正整数、标签与卖点图互斥、卖点图仅朋友圈卡片广告点位支持、浮层卡片仅视频号点位支持，不通过即抛错不启动浏览器。CPC 排除人群按**行序** `getNthChoice(index + 1)` 取避投组合。文件含三个导出：`runAdq`（创建）、`runAdqReplace`（替换创意）、`runAdqCreTemplate`（创建定向模版，按 2^N−1 个组合循环，不参与行级断点续跑）。
 - **[run_bili.js](src/run_bili.js)** 通过 `planDict` 把多行归并到 B站计划（key 为 `campaignNm_audience`）：每个分组的第一行创建计划并存下从 URL 解析出的 `campaign_id`；同组后续行复用它。用到两个页面 —— 一个处理小程序素材，一个走计划/单元流程。
 - **[run_dy.js](src/run_dy.js)** 复制一个已有的抖音项目+广告（`is_copy=1`），填好定向/预算后保存，从 URL 读回 `project_id`，再在其下创建广告单元。三者中最轻量。
 
