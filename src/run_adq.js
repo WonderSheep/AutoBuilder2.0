@@ -17,6 +17,7 @@ async function runAdq(df, idSelector) {
     const hottagUnsupported = [];  // 卖点图仅朋友圈卡片广告点位支持
     const floatCardInvalid = [];     // 浮层卡片必须为正整数（第几个）
     const floatCardUnsupported = []; // 浮层卡片仅视频号点位支持
+    const titleTooLong = [];         // 营销单元名(广告标题) 长度超 60（英文/数字算0.5字，中文算1字）
     const HOTTAG_SUPPORTED = new Set([
         '朋友圈-卡片广告-横版大图-行动按钮',
         '朋友圈-卡片广告-横版大图',
@@ -69,6 +70,11 @@ async function runAdq(df, idSelector) {
                 floatCardUnsupported.push(i + 1);
             }
         }
+        // 营销单元名(unitNm) 长度校验：拼接逻辑与 processRow 完全一致；超 60 不让开始
+        const unitNm = `${v[0]}_${v[2]}_${v[13]}_${pagePst}_${v[20]}_${v[18]}_${v[44]}_${v[23]}`;
+        if (measureAdTitleLen(unitNm) > 60) {
+            titleTooLong.push(i + 1);
+        }
     }
     const errs = [];
     if (tagHotConflicts.length) errs.push(`以下行同时存在「标签」和「卖点图」（互斥）：第 ${tagHotConflicts.join('、')} 行`);
@@ -78,6 +84,7 @@ async function runAdq(df, idSelector) {
     if (hottagUnsupported.length) errs.push(`以下行填了「卖点图」但其点位不支持（仅朋友圈卡片广告支持）：第 ${hottagUnsupported.join('、')} 行`);
     if (floatCardInvalid.length) errs.push(`以下行「浮层卡片」必须为正整数（填第几个）：第 ${floatCardInvalid.join('、')} 行`);
     if (floatCardUnsupported.length) errs.push(`以下行填了「浮层卡片」但其点位不支持（仅视频号点位支持）：第 ${floatCardUnsupported.join('、')} 行`);
+    if (titleTooLong.length) errs.push(`以下行「营销单元名(广告标题)」长度超过 60（英文/数字算0.5字、中文算1字）：第 ${titleTooLong.join('、')} 行`);
     if (errs.length) {
         throw new Error('❌ 搭建前校验未通过：\n' + errs.join('\n') + '\n请修正后重跑。\n');
     }
@@ -102,6 +109,10 @@ async function runAdq(df, idSelector) {
         '朋友圈-卡片广告-横版视频': '卡片广告 横版视频 16:9',
         '朋友圈-竖版大图': '竖版大图 9:16',
         '朋友圈-橱窗广告-图片': '橱窗广告 - 图片',
+        '朋友圈-常规多图-3图': '常规多图 1:1 三图',
+        '朋友圈-常规多图-4图': '常规多图 1:1 四图',
+        '朋友圈-常规多图-6图': '常规多图 1:1 六图',
+        '朋友圈-常规多图-9图': '常规多图 1:1 九图',
         '订阅号消息列表-横版大图': '横版大图 16:9',
         '订阅号消息列表-横版视频': '横版视频 16:9',
         '小程序封面广告': '竖版大图 9:16',
@@ -114,7 +125,7 @@ async function runAdq(df, idSelector) {
         '视频号评论区广告-横版视频': '横版视频 16:9',
         '竖版大图': '竖版大图 9:16',
         '横版大图': '横版大图 16:9',
-        '闪屏视频': '闪屏视频 9:16'
+        '闪屏视频': '闪屏视频  9:16',
     };
     // 单行搭建（抽出为函数，便于行级「刷新+重试」；行体原样、仅多一层函数包裹）
     async function processRow(index, attempt) {
@@ -128,14 +139,14 @@ async function runAdq(df, idSelector) {
         // 数据：0策略ID 2活动名 13媒体 15点位 18脱敏人群 20创意名 23区域
         //       29deeplink 31小程序链接 32落地页类型 40广告账户
         //       44人群标签 45素材 46文案 47品牌形象 48行动按钮 49标签 50卖点图 51首评回复 52浮层卡片
-        // 复制源：col42=复制源广告copyAd（选点位成功后覆盖为 adgroupId）
+        // 复制源：col42=复制源广告copyAd（提交并新建创意跳转后覆盖为 adgroupId）
         // 回写ID：col43=dynamicCreativeId
-        // 标志位：BA(57)='1' 广告组已建   BB(58)='1' 整行完成（readDoneRows 据此跳过整行）
-        // 续跑写入：选点位成功（=广告层级已建）→adgroupId 写回 col42(覆盖copyAd) 且 BA 置 '1'；
-        //          提交创意后→dynamicCreativeId 写 col43 且 BB 置 '1'。
-        // 重跑判定：BB='1' 整行跳过；仅 BA='1'（广告组已建、创意没建完）则直达
+        // 标志位：BF(57)='1' 广告组已建   BG(58)='1' 整行完成（readDoneRows 据此跳过整行）
+        // 续跑写入：点「提交并新建创意」跳转创意编辑页（=广告组已建）→adgroupId 写回 col42(覆盖copyAd) 且 BF 置 '1'；
+        //          配完创意点「提交创意」后→dynamicCreativeId 写 col43 且 BG 置 '1'。
+        // 重跑判定：BG='1' 整行跳过；仅 BF='1'（广告组已建、创意没建完）则直达
         //          creatives-add?adgroup_id= 重选点位+继续创意，跳过广告组创建，避免重复建广告组。
-        // 收尾：BA/BB(57/58) 超出 trim 上限(43)，全部完成后自动删除；col42 的 adgroupId 保留进交付表。
+        // 收尾：BF/BG(57/58) 超出 trim 上限(43)，全部完成后自动删除；col42 的 adgroupId 保留进交付表。
         const values = Object.values(row);
         const strategyId = values[0]; // 策略ID
         const campaignNm = values[2]; // 活动名称
@@ -162,8 +173,8 @@ async function runAdq(df, idSelector) {
         // 营销组件映射（依赖本行 actionBtn/firstReply/floatCard/tagtag，故每行重建）
         const componentMap = buildComponentMap(page, actionBtn, firstReply, floatCard, tagtag, hottag);
         const unitNm = `${strategyId}_${campaignNm}_${media}_${pagePst}_${creativeNm}_${audience}_${audienceTag}_${city}`;
-        // 断点续跑：BA(52)='1' 表示广告组已建过，直达创意配置页跳过广告组创建
-        const adgroupBuilt = String(values[utils_1.BA_COL] || '').trim() === utils_1.TAG_VALUE;
+        // 断点续跑：BF(57)='1' 表示广告组已建过，直达创意配置页跳过广告组创建
+        const adgroupBuilt = String(values[utils_1.AD_COL] || '').trim() === utils_1.TAG_VALUE;
         let adgroupId;
         if (adgroupBuilt) {
             adgroupId = String(values[42] || '').trim();
@@ -203,34 +214,39 @@ async function runAdq(df, idSelector) {
         else {
             await creButton.click();
         }
+        // 提交并新建创意后，平台跳转到创意编辑页（creatives-add?adgroup_id=）= 广告组已建好。
+        // 在此第一时间抠 ID 回写（覆盖 copyAd + BF 置 '1'），不再等到选点位之后——
+        // 否则崩在选点位会丢掉已建的广告组、导致重跑重复建组。
+        // ⚠️ waitForURL 正则用 /creatives-add/ 而非 /adgroup_id=/：建组页 URL 的 ref_adgroup_id
+        //    也含 "adgroup_id=" 子串会误匹配，故用页面名 creatives-add 精确判定跳转完成。
+        await page.waitForURL(/creatives-add/, { timeout: 20000 });
+        adgroupId = (0, utils_1.getUrlParam)(page.url(), 'adgroup_id');
+        if (!adgroupId) {
+            throw new Error(`第${index + 1}行：提交创意后未跳转到创意编辑页 / 未获取到 adgroup_id，广告组可能未创建成功，请检查后重跑`);
+        }
+        (0, utils_1.markRowAndPersist)(df, index, [
+            { col: 42, value: adgroupId },
+            { col: utils_1.AD_COL, value: utils_1.TAG_VALUE },
+        ]);
         }
         // 创意部分
         // 选点位
         await page.locator('button#creative-type-btn').click();
-        const positionText = pagePositionMap[pagePst] || pagePositionMap[pagePst.replace(/-(标签|卖点图)$/, '')] || String(pagePst);
-        // 点位选择：先尝试直接点目标点位（正则 + first，1s 超时）；1s 内点不到说明在另一分组，切开关再点
+        const positionText = pagePositionMap[pagePst];
+        if (!positionText) {
+            throw new Error(`第${index + 1}行：点位「${pagePst}」未在 pagePositionMap 中配置，无法定位平台位置文案，请补齐映射后重跑`);
+        }
+        // 点位选择：先尝试直接点目标点位（正则 + first，0.7s 超时）；0.7s 内点不到说明在另一分组，切开关再点
         const positionRegex = new RegExp(positionText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
         const positionOpt = page.locator('span.odc-text.ellipsis').filter({ hasText: positionRegex }).first();
         try {
-            await positionOpt.click({ timeout: 1000 });
+            await positionOpt.click({ timeout: 700 });
         }
         catch {
             await page.locator('span.spaui-switch-helper').click();
             await positionOpt.click();
         }
         await page.getByRole('button', { name: '确定' }).click();
-        // 点位选成功即代表广告层级已建：首次抓 adgroup_id 回写（覆盖 copyAd + BA 置 '1'），防崩在建创意途中重复建广告组
-        if (!adgroupBuilt) {
-            adgroupId = (0, utils_1.getUrlParam)(page.url(), 'adgroup_id');
-            // 未抠到 adgroup_id 说明广告组未真正创建成功：抛错（不置 BA）让本行下次重试，避免置 BA 后该行卡死
-            if (!adgroupId) {
-                throw new Error(`第${index + 1}行：选点位后未获取到 adgroup_id，广告组可能未创建成功，请检查后重跑`);
-            }
-            (0, utils_1.markRowAndPersist)(df, index, [
-                { col: 42, value: adgroupId },
-                { col: utils_1.BA_COL, value: utils_1.TAG_VALUE },
-            ]);
-        }
         // 图片或视频
         if (pagePst === '朋友圈-橱窗广告-图片') {
             await page.locator('div.spaui-form-group-prefix button.x-filter-btn.spaui-button.spaui-button-text.spaui-button-sm.with-icon').first().click();
@@ -247,7 +263,7 @@ async function runAdq(df, idSelector) {
             //await page.getByRole('textbox', { name: '请输入名称/ID' }).fill(String(assetNm));
             //await page.getByRole('textbox', { name: '请输入名称/ID' }).press('Enter');
             await (0, utils_1.sleep)(500);
-            await page.locator('div.odc-titlebar-desc.odc-line-clamp.break-all').filter({ hasText: new RegExp(`^ID:${assetNm}$`) }).first().click({ force: true });
+            await page.locator('div.odc-titlebar-desc.odc-line-clamp.break-all').filter({ hasText: new RegExp(`ID:${assetNm}$`) }).first().click({ force: true });
         }
         // 文案
         if (await page.getByText('文案').count() > 0) {
@@ -282,10 +298,11 @@ async function runAdq(df, idSelector) {
                 .filter({ hasText: new RegExp(`^${String(logo)}$`) }).first().click();
         }
         // 营销组件（pagePst 带 -标签/-卖点图 后缀时，回退到基础点位查函数）
-        const componentFunc = componentMap[pagePst] || componentMap[pagePst.replace(/-(标签|卖点图)$/, '')];
-        if (componentFunc) {
-            await componentFunc();
+        const componentFunc = componentMap[pagePst];
+        if (!componentFunc) {
+            throw new Error(`第${index + 1}行：点位「${pagePst}」未在 componentMap 中配置营销组件函数，请补齐后重跑`);
         }
+        await componentFunc();
         // 创意名称
         await page.getByText('创意设置').click();
         const targetInput = await page.waitForSelector('input.meta-input.spaui-input.has-normal', { timeout: 10000 });
@@ -303,13 +320,13 @@ async function runAdq(df, idSelector) {
         doneRows.add(index);
         (0, utils_1.markRowAndPersist)(df, index, [
             { col: 43, value: dynamicCreativeId },
-            { col: utils_1.TAG_COL, value: utils_1.TAG_VALUE },
+            { col: utils_1.CRE_COL, value: utils_1.TAG_VALUE },
         ]);
         console.log(`第${index + 1}条广告 : ${unitNm} 创建成功\n`);
     }
     // 行级「刷新+重试」容错：首跑失败则刷新页面重试 2 次；仍失败则抛错中止整批（绝不跳行）
     for (let index = 0; index < df.length; index++) {
-        // 断点续跑：已完成（BB 列有标记）的行直接跳过
+        // 断点续跑：已完成（BG 列有标记）的行直接跳过
         if (doneRows.has(index)) {
             continue;
         }
@@ -326,17 +343,43 @@ async function runAdq(df, idSelector) {
     }
 }
 /**
+ * 营销单元名(广告标题)长度计数：英文/数字(ASCII 半角可打印 0x20~0x7E)算 0.5 字符，
+ * 中文及其余字符(中文标点/全角符号/emoji 等)算 1 字符。
+ * 对应腾讯广告「营销单元名称」字数限制（1 汉字 = 1，2 英文/数字 = 1，故 60 上限 ≈ 30 汉字）。
+ */
+function measureAdTitleLen(str) {
+    let len = 0;
+    for (const ch of String(str)) {
+        const code = ch.codePointAt(0);
+        if (code >= 0x20 && code <= 0x7E) {
+            len += 0.5; // 半角可打印：英文/数字/英文标点/空格/下划线
+        }
+        else {
+            len += 1;   // 中文/中文标点/全角符号/emoji 等
+        }
+    }
+    return len;
+}
+/**
  * 构建"点位 → 营销组件设置函数"映射。
  * 因 actionBtn/firstReply/floatCard/tagtag 现按行从 Excel 读取，故每行调用一次重建。
  */
 function buildComponentMap(page, actionBtn, firstReply, floatCard, tagtag, hottag) {
     return {
+        '朋友圈-卡片广告-横版大图-行动按钮-标签': () => wxFriendsCardBp(page, actionBtn, firstReply, tagtag, hottag),
+        '朋友圈-卡片广告-横版大图-行动按钮-卖点图': () => wxFriendsCardBp(page, actionBtn, firstReply, tagtag, hottag),
         '朋友圈-卡片广告-横版大图-行动按钮': () => wxFriendsCardBp(page, actionBtn, firstReply, tagtag, hottag),
         '朋友圈-卡片广告-横版大图': () => wxFriendsCardBp(page, actionBtn, firstReply, tagtag, hottag),
+        '朋友圈-卡片广告-横版视频-行动按钮-标签': () => wxFriendsCardVideo(page, actionBtn, firstReply, tagtag, hottag),
+        '朋友圈-卡片广告-横版视频-行动按钮-卖点图': () => wxFriendsCardVideo(page, actionBtn, firstReply, tagtag, hottag),
         '朋友圈-卡片广告-横版视频-行动按钮': () => wxFriendsCardVideo(page, actionBtn, firstReply, tagtag, hottag),
         '朋友圈-卡片广告-横版视频': () => wxFriendsCardVideo(page, actionBtn, firstReply, tagtag, hottag),
         '朋友圈-竖版大图': () => wxFriendsShubanBp(page, actionBtn, firstReply),
         '朋友圈-橱窗广告-图片': () => wxFriendsWindows(page, actionBtn, firstReply),
+        '朋友圈-常规多图-3图': () => wxNormalMultiPage(page, actionBtn, firstReply),
+        '朋友圈-常规多图-4图': () => wxNormalMultiPage(page, actionBtn, firstReply),
+        '朋友圈-常规多图-6图': () => wxNormalMultiPage(page, actionBtn, firstReply),
+        '朋友圈-常规多图-9图': () => wxNormalMultiPage(page, actionBtn, firstReply),
         '订阅号消息列表-横版大图': () => wxSubBp(page, actionBtn),
         '订阅号消息列表-横版视频': () => wxSubVideo(page, actionBtn),
         '小程序封面广告': () => wxMiniProShubanBp(page),
@@ -445,10 +488,10 @@ async function wxFriendsCardVideo(page, actionBtn, firstReply, tagtag,hottag) {
 async function wxFriendsShubanBp(page, actionBtn, firstReply) {
     await page.getByText('营销组件').first().click();
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '图文链接' }).click();
-    if (firstReply === '') {
-        await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '首评回复' }).click();
-    }
-    await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '标签' }).click();
+    //if (firstReply === '') {
+    //    await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '首评回复' }).click();
+    //}
+    //await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '标签' }).click();
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '文字链' }).click();
     await page.locator('span.odc-text.ellipsis').filter({ hasText: '文字链' }).click();
     await page.getByText('请选择文字链文案').click();
@@ -468,10 +511,33 @@ async function wxFriendsShubanBp(page, actionBtn, firstReply) {
 async function wxFriendsWindows(page, actionBtn, firstReply) {
     await page.getByText('营销组件').first().click();
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '图文链接' }).click();
-    if (firstReply === '') {
-        await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '首评回复' }).click();
+    //if (firstReply === '') {
+    //    await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '首评回复' }).click();
+    //}
+    //await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '标签' }).click();
+    await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '文字链' }).click();
+    await page.locator('span.odc-text.ellipsis').filter({ hasText: '文字链' }).click();
+    await page.getByText('请选择文字链文案').click();
+    await page.getByRole('textbox', { name: '搜索' }).fill(actionBtn);
+    const sel = await page.waitForSelector(`div.selection-name[data-value="${actionBtn}"]`, { timeout: 3000 });
+    await sel.click();
+    await page.getByRole('button', { name: '确定' }).click();
+    if (firstReply !== '') {
+        await page.locator('span.odc-text.ellipsis').filter({ hasText: '首评回复' }).click();
+        // 共同容器 div.x-card.x-middle-card + h5[title="首评回复"] 锁定区块，按索引选
+        await page.locator('div.x-card.x-middle-card')
+            .filter({ has: page.locator('h5[title="首评回复"]') })
+            .locator('div[tabindex="0"][data-hottag]')
+            .nth(firstReply-1).click();
     }
-    await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '标签' }).click();
+}
+async function wxNormalMultiPage(page, actionBtn, firstReply) {
+    await page.getByText('营销组件').first().click();
+    await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '图文链接' }).click();
+    //if (firstReply === '') {
+    //    await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '首评回复' }).click();
+    //}
+    //await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '标签' }).click();
     await page.locator('div.x-comp-overv-info span.odc-text').filter({ hasText: '文字链' }).click();
     await page.locator('span.odc-text.ellipsis').filter({ hasText: '文字链' }).click();
     await page.getByText('请选择文字链文案').click();
@@ -653,12 +719,12 @@ async function runAdqReplace(df) {
     await page.goto('https://ad.qq.com');
     (0, utils_1.waitForEnter)('确保当前已处于登录状态后，按下回车开始替换！\n');
     await (0, utils_1.saveAuthState)(context, 'auth_state_adq.json');
-    // 断点续跑：从 BB 列恢复已完成行
+    // 断点续跑：从 BG 列恢复已完成行
     const doneRows = (0, utils_1.readDoneRows)(df);
     console.log(`📦 恢复断点：已完成 ${doneRows.size} 条\n`);
     for (let index = 0; index < df.length; index++) {
         const row = df[index];
-        // 断点续跑：已完成（BB 列有标记）的行直接跳过
+        // 断点续跑：已完成（BG 列有标记）的行直接跳过
         if (doneRows.has(index)) {
             continue;
         }
@@ -726,7 +792,7 @@ async function runAdqReplace(df) {
         await page.getByRole('button', { name: '编辑' }).first().waitFor({ state: 'visible', timeout: 20000 });
         // 回写 BB 完成标记（断点续跑）
         doneRows.add(index);
-        (0, utils_1.markRowAndPersist)(df, index, [{ col: utils_1.TAG_COL, value: utils_1.TAG_VALUE }]);
+        (0, utils_1.markRowAndPersist)(df, index, [{ col: utils_1.CRE_COL, value: utils_1.TAG_VALUE }]);
         console.log(`第${index + 1}条创意 : 修改成功\n`);
     }
     // 全部完成则删列收尾；否则保留以便续跑

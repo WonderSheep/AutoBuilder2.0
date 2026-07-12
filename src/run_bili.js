@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.runBili = runBili;
 const utils_1 = require("./utils");
-// 计划级 campaign_id 回写列（AR，0-based 43）；行级完成标记统一用 utils 的 BB 列（utils_1.TAG_COL）
+// 计划级 campaign_id 回写列（AR，0-based 43）；行级完成标记统一用 utils 的 BG 列（utils_1.CRE_COL）
 const CAMPAIGN_ID_COL = 43;
 /**
  * B站广告搭建主函数
@@ -19,7 +19,7 @@ async function runBili(df) {
     (0, utils_1.waitForEnter)('确保当前已处于登录状态后，按下回车开始搭建！若未登录，Misa手机号：13761307177\n');
     await (0, utils_1.saveAuthState)(context, 'auth_state_bili.json');
     await page1.goto(`https://ad.bilibili.com/#/assets/index?activeTab=my-small-game&type=list&account_id=${accountId}`);
-    // 断点续跑：从 BB 列恢复已完成行；从 AR 列恢复已建计划ID 重建 planDict
+    // 断点续跑：从 BG 列恢复已完成行；从 AR 列恢复已建计划ID 重建 planDict
     const doneRows = (0, utils_1.readDoneRows)(df);
     const planDict = {};
     for (let i = 0; i < df.length; i++) {
@@ -164,9 +164,9 @@ async function runBili(df) {
         // 添加图片/视频
         if (['信息流小卡_图片', '信息流大卡_图片','播放页_图片'].includes(String(pagePst))) {
             await page.getByRole('button', { name: '添加图片' }).click();
-            await page.getByRole('textbox', { name: '请输入图片名称' }).fill(String(assetNm));
-            await page.getByRole('textbox', { name: '请输入图片名称' }).press('Enter');
-            await (0, utils_1.sleep)(150);
+            //await page.getByRole('textbox', { name: '请输入图片名称' }).fill(String(assetNm));
+            //await page.getByRole('textbox', { name: '请输入图片名称' }).press('Enter');
+            await (0, utils_1.sleep)(250);
             // 选择图片
             const targetDiv = page.getByText(String(assetNm), { exact: true }).first();
             await targetDiv.waitFor({ state: 'visible', timeout: 5000 });
@@ -176,17 +176,25 @@ async function runBili(df) {
                 const clickY = divBox.y - 50;
                 await page.mouse.click(clickX, clickY);
             }
-            await page.locator('button.ivu-btn.ivu-btn-primary.ok-btn[type="button"][data-v-26f6aad8] span')
-                .filter({ hasText: /^确认$/ }).click();
+            //await page.locator('button.ivu-btn.ivu-btn-primary.ok-btn[type="button"][data-v-26f6aad8] span')
+            //    .filter({ hasText: /^确认$/ }).click();
+            await page.locator('div.ivu-drawer-body')
+            .filter({ has: page.locator('div.asset-list') })
+            .locator('button.ok-btn span')
+            .filter({ hasText: /^确认$/ }).click();
         }
         else {
             await page.getByRole('button', { name: '添加稿件/视频' }).click();
             await page.getByRole('link', { name: '我的视频' }).click();
-            await page.getByRole('textbox', { name: '请输入视频名称搜索' }).fill(String(assetNm));
-            await page.getByRole('textbox', { name: '请输入视频名称搜索' }).press('Enter');
-            await page.locator('span.vm[data-v-78adeed5]').filter({ hasText: String(assetNm) }).first().click();
-            await page.locator('div.footer-actions button.ivu-btn.ivu-btn-primary.btn.primary[type="button"][data-v-2c9c7164]')
-                .nth(0).click();
+            //await page.getByRole('textbox', { name: '请输入视频名称搜索' }).fill(String(assetNm));
+            //await page.getByRole('textbox', { name: '请输入视频名称搜索' }).press('Enter');
+            await page.locator('span.vm').filter({ hasText: String(assetNm) }).first().click();
+            //await page.locator('div.footer-actions button.ivu-btn.ivu-btn-primary.btn.primary[type="button"][data-v-280bc454]')
+            //    .nth(0).click();
+            await page.locator('div.ivu-drawer-body')
+            .filter({ has: page.locator('div.video-select-list') })
+            .locator('button.primary').click();
+            //.filter({ hasText: /^确认$/ }).click();
         }
         // 素材标题
         await page.getByRole('textbox', { name: '请输入2~40个字（移动场景建议18字以内）' }).fill(String(copywritingTle));
@@ -231,13 +239,13 @@ async function runBili(df) {
         doneRows.add(index);
         (0, utils_1.markRowAndPersist)(df, index, [
             { col: CAMPAIGN_ID_COL, value: planDict[planNm] },
-            { col: utils_1.TAG_COL, value: utils_1.TAG_VALUE },
+            { col: utils_1.CRE_COL, value: utils_1.TAG_VALUE },
         ]);
         console.log(`第${index + 1}条广告 : ${unitNm} 创建成功\n`);
     }
     // 行级「刷新+重试」容错：首跑失败则刷新页面重试 2 次；仍失败则抛错中止整批（绝不跳行）
     for (let index = 0; index < df.length; index++) {
-        // 断点续跑：已完成（BB 列有标记）的行直接跳过
+        // 断点续跑：已完成（BG 列有标记）的行直接跳过
         if (doneRows.has(index)) {
             continue;
         }

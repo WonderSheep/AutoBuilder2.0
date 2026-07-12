@@ -173,7 +173,7 @@ async function robustRefresh(page, context, url) {
 /**
  * 行级「刷新 + 重试」容错：把单行搭建包进来，首跑失败则刷新页面重试，最多 retries 次重试（共 retries+1 次尝试）。
  * run(attempt) 为本行搭建逻辑；attempt=0 是首跑（无额外开销），attempt>0 时由调用方在 run 内自行做
- * robustRefresh + sleep（内存 df 已由 markRowAndPersist 在回写时经 applyRowToMemory 同步，BA/BB 守卫能直接读到上次写入，无需再 readExcelFile 重读）。
+ * robustRefresh + sleep（内存 df 已由 markRowAndPersist 在回写时经 applyRowToMemory 同步，BF/BG 守卫能直接读到上次写入，无需再 readExcelFile 重读）。
  * 致命错误（run 内抛 e.fatal=true，如回写失败）不重试，立即向上抛中止整批——重试无益且重跑会重复创建广告/创意。
  * 非致命错误全部尝试均失败 → 抛聚合错误（交由外层 main 兜底中止整批）；绝不跳行。
  */
@@ -446,24 +446,24 @@ function writeBackInPlace(df, perRowUpdates) {
     worksheet['!ref'] = XLSX.utils.encode_range(range);
     XLSX.writeFile(workbook, tplPath);
 }
-// ===== 断点续跑（三平台统一）：BB 列完成标记 + 循环后删列 =====
-// BB 列（第 54 列，0-based 53）填 TAG_VALUE 表示"该行已完成"，三平台共用。
+// ===== 断点续跑（三平台统一）：BG 列完成标记 + 循环后删列 =====
+// BG 列（第 59 列，0-based 58）填 TAG_VALUE 表示"该行已完成"，三平台共用。
 // 用户可在 Excel 里直接增删该值来控制重跑：删掉→该行重跑；填上→强制跳过。
-// BA/BB 断点标记列（0-based）。原 52/53，因创意内容列扩展（加卖点图等）后移 5 列到 57/58，
-// 给前面创意内容腾空间、避免与数据列冲突。三平台共用：adq/dy 用 BA+BB，bili 仅 BB。
-const BA_COL = 57;
-const TAG_COL = 58;
+// 断点标记列（0-based）。原 52/53（即 BA/BB），因创意内容列扩展（加卖点图等）后移 5 列到 57/58（即 BF/BG），
+// 给前面创意内容腾空间、避免与数据列冲突。三平台共用：adq/dy 用 AD_COL(BF)+CRE_COL(BG)，bili 仅 CRE_COL(BG)。
+const AD_COL = 57;
+const CRE_COL = 58;
 const TAG_VALUE = '1';
 // 删列时保留 A-AR（0-based 0-43），删除 AS 及之后（含 BB），与原裁剪逻辑一致。
 const TRIM_MAX_COL = 43;
 /**
- * 读取已完成的行号集合（BB 列值为 TAG_VALUE 的行）。
+ * 读取已完成的行号集合（BG 列值为 TAG_VALUE 的行）。
  */
 function readDoneRows(df) {
     const doneRows = new Set();
     for (let i = 0; i < df.length; i++) {
         const v = Object.values(df[i]);
-        if (v.length > TAG_COL && String(v[TAG_COL] || '').trim() === TAG_VALUE) {
+        if (v.length > CRE_COL && String(v[CRE_COL] || '').trim() === TAG_VALUE) {
             doneRows.add(i);
         }
     }
@@ -472,7 +472,7 @@ function readDoneRows(df) {
 /**
  * 就地把指定行的若干单元格写回原 xlsx（其余行不动），用于断点续跑的增量持久化。
  * value=null 表示清空该单元格；undefined/空串跳过；其他写入。
- * 磁盘写成功后同步更新内存 df[rowIndex]（applyRowToMemory），使同进程行级重试时 BA/BB 守卫
+ * 磁盘写成功后同步更新内存 df[rowIndex]（applyRowToMemory），使同进程行级重试时 BF/BG 守卫
  * 能直接读到最新值，免去重试前 readExcelFile()[index] 全量重读（#2 性能优化）。
  * 顺序关键：先写磁盘、成功后才更内存，保证内存永不超前磁盘（崩溃重启以磁盘为准）。
  * 回写失败（磁盘满/权限/Excel 被占用等持续性故障）：抛"致命错误"（fatal:true）让 withRowRetry
@@ -494,7 +494,7 @@ function markRowAndPersist(df, rowIndex, cells) {
 /**
  * 把 cells 反映到内存 df[rowIndex]（键为表头名、按列号定位，与 runners 的 Object.values(row)[col] 一致）。
  * 陷阱①：不能赋值给 Object.values(row)[col]（那是临时数组副本，赋值无效），必须经 Object.keys 映射到键名；
- * 陷阱②：若该行列数不足（如 BA/BB 在 col57/58 超出原表头列数），补 __PAD_ 占位键扩展到目标列，保持列对齐、绝不读盘。
+ * 陷阱②：若该行列数不足（如 BF/BG 在 col57/58 超出原表头列数），补 __PAD_ 占位键扩展到目标列，保持列对齐、绝不读盘。
  */
 function applyRowToMemory(df, rowIndex, cells) {
     const row = df[rowIndex];
@@ -514,7 +514,7 @@ function applyRowToMemory(df, rowIndex, cells) {
             continue;
         }
         // 确保 row 键数 > u.col：不足则补 __PAD_ 占位键，保持 Object.values(row)[col] 列对齐、绝不读盘。
-        // （BA/BB 在 col57/58 常超出 Excel 原表头列数；旧逻辑回退 readExcelFile 会导致每行读盘+刷日志）
+        // （BF/BG 在 col57/58 常超出 Excel 原表头列数；旧逻辑回退 readExcelFile 会导致每行读盘+刷日志）
         let keys = Object.keys(row);
         while (keys.length <= u.col) {
             row[`__PAD_${keys.length}`] = '';
@@ -581,8 +581,8 @@ function trimColumnsIfAllDone(df, doneRows) {
     console.log(`⏸️  尚未全部完成（${doneRows.size}/${df.length}），保留全部列以便断点续跑\n`);
     return false;
 }
-exports.BA_COL = BA_COL;
-exports.TAG_COL = TAG_COL;
+exports.AD_COL = AD_COL;
+exports.CRE_COL = CRE_COL;
 exports.TAG_VALUE = TAG_VALUE;
 exports.TRIM_MAX_COL = TRIM_MAX_COL;
 exports.readDoneRows = readDoneRows;
