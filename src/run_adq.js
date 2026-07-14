@@ -71,7 +71,7 @@ async function runAdq(df, idSelector) {
             }
         }
         // 营销单元名(unitNm) 长度校验：拼接逻辑与 processRow 完全一致；超 60 不让开始
-        const unitNm = `${v[0]}_${v[2]}_${v[13]}_${pagePst}_${v[20]}_${v[18]}_${v[44]}_${v[23]}`;
+        const unitNm = `${v[0]}_${v[2]}_${v[13]}_${pagePst}_${v[20]}_${v[18]}_${v[44]}_${v[23]}${idSelector !== null ? '_CPC' : '_CPM'}`;
         if (measureAdTitleLen(unitNm) > 60) {
             titleTooLong.push(i + 1);
         }
@@ -172,7 +172,7 @@ async function runAdq(df, idSelector) {
         const floatCard = String(values[52] || '').trim(); // 视频号浮层卡片
         // 营销组件映射（依赖本行 actionBtn/firstReply/floatCard/tagtag，故每行重建）
         const componentMap = buildComponentMap(page, actionBtn, firstReply, floatCard, tagtag, hottag);
-        const unitNm = `${strategyId}_${campaignNm}_${media}_${pagePst}_${creativeNm}_${audience}_${audienceTag}_${city}`;
+        const unitNm = `${strategyId}_${campaignNm}_${media}_${pagePst}_${creativeNm}_${audience}_${audienceTag}_${city}${idSelector !== null ? '_CPC' : '_CPM'}`;
         // 断点续跑：BF(57)='1' 表示广告组已建过，直达创意配置页跳过广告组创建
         const adgroupBuilt = String(values[utils_1.AD_COL] || '').trim() === utils_1.TAG_VALUE;
         let adgroupId;
